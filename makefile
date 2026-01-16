@@ -3,63 +3,62 @@ LD      = ld
 AS      = nasm
 OBJCOPY = objcopy
 
-# Flags
-CFLAGS  = -m32 -ffreestanding -fno-pic -fno-pie \
-          -fno-stack-protector -nostdlib -nostartfiles -c
+CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector -nostdlib -nostartfiles -c
 
 LDFLAGS = -m elf_i386 -T linker.ld
 
-BUILD   = build
+BUILD = build
+INCLUDE = include
 
-# Fonte
 BOOTLOADER = core/bootloader.asm
-KENTRY     = core/kernel_entry.asm
-KERNEL_C   = kernel.c
-VGA_C      = include/vga.c
+KENTRY	   = core/kernel_entry.asm
+KERNEL	   = kernel.c
 
-# alvo padrão
+CFILES   := $(wildcard include/*.c)
+ASMFILES := $(wildcard include/*.asm)
+
+OBJS_C   := $(patsubst include/%.c,$(BUILD)/%.o,$(CFILES))
+OBJS_ASM := $(patsubst include/%.asm,$(BUILD)/%.o,$(ASMFILES))
+
 all: compile
 
 compile: $(BUILD)/kernel.img
 
-# Bootloader (512 bytes)
-$(BUILD)/bootloader.bin: $(BOOTLOADER)
+$(BUILD):
 	mkdir -p $(BUILD)
+
+# Core
+$(BUILD)/bootloader.bin: $(BOOTLOADER) | $(BUILD)
 	$(AS) -f bin $< -o $@
 
-# Entry do kernel
-$(BUILD)/kernel_entry.o: $(KENTRY)
-	mkdir -p $(BUILD)
+$(BUILD)/kernel_entry.o: $(KENTRY) | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-# Kernel C
-$(BUILD)/kernel.o: $(KERNEL_C)
-	mkdir -p $(BUILD)
+# Kernel
+$(BUILD)/kernel.o: $(KERNEL) | $(BUILD)
 	$(CC) $(CFLAGS) $< -o $@
 
-# VGA driver
-$(BUILD)/vga.o: $(VGA_C)
-	mkdir -p $(BUILD)
+
+# Other dependencies
+$(BUILD)/%.o: include/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $< -o $@
 
-# Linkagem ELF
-$(BUILD)/kernel.elf: $(BUILD)/kernel_entry.o $(BUILD)/kernel.o $(BUILD)/vga.o linker.ld
-	$(LD) $(LDFLAGS) \
-	    $(BUILD)/kernel_entry.o $(BUILD)/kernel.o $(BUILD)/vga.o \
-	    -o $@
+$(BUILD)/%.o: include/%.asm | $(BUILD)
+	$(AS) -f elf32 $< -o $@
 
-# Converte ELF -> BIN
+# Mounting IMG
+$(BUILD)/kernel.elf: $(BUILD)/kernel_entry.o $(BUILD)/kernel.o $(OBJS_C) $(OBJS_ASM)
+	$(LD) $(LDFLAGS) $^ -o $@
+
 $(BUILD)/kernel.bin: $(BUILD)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
 
-# Imagem final (bootloader + kernel)
 $(BUILD)/kernel.img: $(BUILD)/bootloader.bin $(BUILD)/kernel.bin
 	cat $^ > $@
 
-# Execução
+
 run: $(BUILD)/kernel.img
 	qemu-system-i386 $<
 
-# Limpeza
 clean:
 	rm -rf $(BUILD)

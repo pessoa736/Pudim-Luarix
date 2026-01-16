@@ -58,7 +58,7 @@ gdt_descriptor:
 dap:
     db 0x10        ; size
     db 0
-    dw 1           ; sector
+    dw 2           ; sector
     dw KERNEL_LOCATION
     dw 0x0000
     dq 1           ; LBA sector

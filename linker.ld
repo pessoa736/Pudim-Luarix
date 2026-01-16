@@ -26,4 +26,10 @@ SECTIONS
         *(COMMON)
         __bss_end = .;
     }
+
+    .idt :
+    {
+        __idt_start__ =  0xF000;
+         
+    }
 }
