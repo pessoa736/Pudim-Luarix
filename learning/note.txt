@@ -1,0 +1,3 @@
+
+essa passa learning/ é para aprendizado, logo os arquivos aqui presentes não tem nenhum 
+intuito alem de entender alguns conceitos
