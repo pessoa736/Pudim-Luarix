@@ -1,0 +1,38 @@
+
+
+[10:45 - 10/3/2026] 
+
+Inicio.
+
+O intuito desse kernel é ser um kernel que tem o lua integrado a ele,
+com apis lua para mexer no sistema. Um projeto movido pela curiosidade 
+de como um sistema pode funcionar nesse contexto.
+
+ja estava com essa curiosidade a um tempo, porem, decidi botar a mão na
+massa após ver "Tentando fazer um kernel em C e assembly" no Lowwryzen 
+no youtube (https://www.youtube.com/watch?v=_IIyBe_KTRc&t=679s) 
+inicialmente to me inspirando muito no video dele e no repositorio do 
+github do laurix (https://github.com/lowwryzen/laurix) que ele 
+disponibilizou no video, mais pretendo ir melhorando o sistema aos
+poucos.
+
+
+[19:29 - 10/03/2026]
+
+A fork.
+
+decidi pegar fazer a fork do repositorio lowwryzen/laurix para usa-lo
+de base para o meu, ja que eu meu entendimento de assembly é minimo,
+e o resto eu desemrolo com o tempo.
+
+
+[19:35 - 10/03/2026]
+
+o nome.
+
+eu tinha intenção de chamar esse kernel de PudimKernel, porem como vou
+fazer a fork do lowwryzen/laurix pretendo chama-lo de Pudim-Luarix 
+fazendo um trocadinho com lua e pudim somado ao laurix. tomei essa
+decisão pois eu me sintiria muito mal se eu não referencia-se o
+repositorio original (mesmo sabendo que o projeto é MIT), e tbm pq 
+acho que tem mais personalidade que só PudimKernel.
