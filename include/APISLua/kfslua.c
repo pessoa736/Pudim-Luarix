@@ -205,6 +205,9 @@ int kfslua_register(lua_State* L) {
     lua_pushcfunction(L, kfslua_clear);
     lua_setfield(L, -2, "clear");
 
+    lua_pushvalue(L, -1);
+    lua_setglobal(L, "fs");
+
     lua_setglobal(L, "kfs");
 
     return 1;

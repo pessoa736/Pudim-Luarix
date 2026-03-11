@@ -109,7 +109,7 @@ int klua_cmd_run(const char* name) {
     script = klua_cmd_get_script(name);
 
     if (!script) {
-        return 0;
+        return klua_call_global_table_function(KLUA_CMD_TABLE, name);
     }
 
     while (script[i]) {

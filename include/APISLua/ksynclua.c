@@ -19,11 +19,15 @@ static int ksynclua_spinlock_new(lua_State* L) {
     lock_p = (ksync_spinlock_t**)lua_newuserdata(L, sizeof(ksync_spinlock_t*));
     *lock_p = lock;
 
-    lua_createtable(L, 0, 2);
+    lua_createtable(L, 0, 4);
     lua_pushcfunction(L, ksynclua_spinlock_lock);
     lua_setfield(L, -2, "lock");
     lua_pushcfunction(L, ksynclua_spinlock_unlock);
     lua_setfield(L, -2, "unlock");
+    lua_pushcfunction(L, ksynclua_spinlock_lock);
+    lua_setfield(L, -2, "acquire");
+    lua_pushcfunction(L, ksynclua_spinlock_unlock);
+    lua_setfield(L, -2, "release");
     lua_setmetatable(L, -2);
 
     return 1;
@@ -68,11 +72,15 @@ static int ksynclua_mutex_new(lua_State* L) {
     lock_p = (ksync_mutex_t**)lua_newuserdata(L, sizeof(ksync_mutex_t*));
     *lock_p = lock;
 
-    lua_createtable(L, 0, 2);
+    lua_createtable(L, 0, 4);
     lua_pushcfunction(L, ksynclua_mutex_lock);
     lua_setfield(L, -2, "lock");
     lua_pushcfunction(L, ksynclua_mutex_unlock);
     lua_setfield(L, -2, "unlock");
+    lua_pushcfunction(L, ksynclua_mutex_lock);
+    lua_setfield(L, -2, "acquire");
+    lua_pushcfunction(L, ksynclua_mutex_unlock);
+    lua_setfield(L, -2, "release");
     lua_setmetatable(L, -2);
 
     return 1;

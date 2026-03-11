@@ -2,6 +2,8 @@
 #include "kheap.h"
 #include "kio.h"
 #include "kfslua.h"
+#include "kmemorylua.h"
+#include "kprocesslua.h"
 #include "ksyslua.h"
 #include "ksynclua.h"
 #include "serial.h"
@@ -244,6 +246,14 @@ int klua_init(void) {
         return 0;
     }
 
+    if (!kmemorylua_register(g_lua)) {
+        return 0;
+    }
+
+    if (!kprocesslua_register(g_lua)) {
+        return 0;
+    }
+
     return 1;
 }
 
@@ -341,6 +351,43 @@ int klua_get_global_table_string(const char* table_name, const char* key, char* 
 
     lua_pop(g_lua, 2);
     return ok;
+}
+
+int klua_call_global_table_function(const char* table_name, const char* key) {
+    int call_result;
+
+    if (!g_lua || !table_name || !key) {
+        return 0;
+    }
+
+    lua_getglobal(g_lua, table_name);
+    if (!lua_istable(g_lua, -1)) {
+        lua_pop(g_lua, 1);
+        return 0;
+    }
+
+    lua_getfield(g_lua, -1, key);
+    if (!lua_isfunction(g_lua, -1)) {
+        lua_pop(g_lua, 2);
+        return 0;
+    }
+
+    call_result = lua_pcall(g_lua, 0, 0, 0);
+    if (call_result != LUA_OK) {
+        vga_print("[lua] Command function error: ");
+        {
+            const char* err = lua_tostring(g_lua, -1);
+            if (err) {
+                vga_print(err);
+            }
+        }
+        vga_print("\n");
+        lua_pop(g_lua, 2);
+        return 0;
+    }
+
+    lua_pop(g_lua, 1);
+    return 1;
 }
 
 unsigned int klua_get_global_table_count(const char* table_name) {
