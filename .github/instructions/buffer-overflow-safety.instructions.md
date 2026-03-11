@@ -1,12 +1,12 @@
 ---
-description: "Enforce buffer overflow and memory safety standards for kernel C code in include/. Validates buffer sizes, string lengths, argument counts, and bounds checks."
+description: "Enforce buffer overflow and memory safety standards for kernel C code in include/ and drives/. Validates buffer sizes, string lengths, argument counts, and bounds checks."
 name: "Buffer Overflow & Memory Safety"
-applyTo: "include/**/*.{c,h}"
+applyTo: "include/**/*.{c,h},drives/**/*.{c,h}"
 ---
 
 # Buffer Overflow & Memory Safety Standards
 
-All code in `include/` must implement explicit bounds checking and overflow prevention. This instruction enforces kernel-level memory safety for freestanding implementations.
+All code in `include/` and `drives/` must implement explicit bounds checking and overflow prevention. This instruction enforces kernel-level memory safety for freestanding implementations.
 
 ## 1. Buffer Size Constants
 
