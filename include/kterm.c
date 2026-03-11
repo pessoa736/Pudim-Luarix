@@ -1,8 +1,11 @@
 #include "kterm.h"
 #include "kio.h"
 #include "kfs.h"
+#include "keyboard.h"
 #include "klua_cmds.h"
+#include "kprocess.h"
 #include "serial.h"
+#include "vga.h"
 
 #define KTERM_BUF_SIZE 256
 #define KTERM_MAX_CMD_LEN 250
@@ -84,40 +87,49 @@ static void kterm_u64_to_str(size_t value, char* out, size_t out_cap) {
 }
 
 static void kterm_print_prompt(void) {
-    serial_print("kterm> ");
+    kio_write("kterm> ");
 }
 
 static void kterm_print_help(void) {
-    serial_print("commands: help clear ls write read append rm count size lcmds lrun exit\r\n");
+    kio_write("commands: help clear ls write read append rm count size lcmds lrun exit\n");
+}
+
+static void kterm_result(const char* s) {
+    if (!s) {
+        return;
+    }
+
+    kio_write(s);
+    serial_print(s);
 }
 
 static void kterm_cmd_lcmds(void) {
     unsigned int total = klua_cmd_count();
 
     if (total == 0) {
-        serial_print("(no lua commands)\r\n");
+        kterm_result("(no lua commands)\r\n");
         return;
     }
 
     for (unsigned int i = 0; i < total; i++) {
         const char* name = klua_cmd_name_at(i);
         if (name) {
-            serial_print(name);
-            serial_print("\r\n");
+            kterm_result(name);
+            kterm_result("\r\n");
         }
     }
 }
 
 static void kterm_cmd_lrun(const char* name) {
     if (!name || !name[0]) {
-        serial_print("usage: lrun <lua_command_name>\r\n");
+        kio_write("usage: lrun <lua_command_name>\n");
         return;
     }
 
     if (klua_cmd_run(name)) {
-        serial_print("lua command executed\r\n");
+        kterm_result("lua command executed\r\n");
     } else {
-        serial_print("lua command not found or failed\r\n");
+        kterm_result("lua command not found or failed\r\n");
     }
 }
 
@@ -125,15 +137,15 @@ static void kterm_cmd_ls(void) {
     size_t count = kfs_count();
 
     if (count == 0) {
-        serial_print("(empty)\r\n");
+        kterm_result("(empty)\r\n");
         return;
     }
 
     for (size_t i = 0; i < count; i++) {
         const char* name = kfs_name_at(i);
         if (name) {
-            serial_print(name);
-            serial_print("\r\n");
+            kterm_result(name);
+            kterm_result("\r\n");
         }
     }
 }
@@ -142,21 +154,21 @@ static void kterm_cmd_count(void) {
     char buf[32];
 
     kterm_u64_to_str(kfs_count(), buf, sizeof(buf));
-    serial_print(buf);
-    serial_print("\r\n");
+    kterm_result(buf);
+    kterm_result("\r\n");
 }
 
 static void kterm_cmd_size(const char* name) {
     char buf[32];
 
     if (!name || !name[0]) {
-        serial_print("usage: size <name>\r\n");
+        kio_write("usage: size <name>\n");
         return;
     }
 
     kterm_u64_to_str(kfs_size(name), buf, sizeof(buf));
-    serial_print(buf);
-    serial_print("\r\n");
+    kterm_result(buf);
+    kterm_result("\r\n");
 }
 
 static char* kterm_skip_cmd(char* line) {
@@ -183,7 +195,7 @@ static void kterm_cmd_write(char* args) {
     }
 
     if (!args[0] || !args[i]) {
-        serial_print("usage: write <name> <content>\r\n");
+        kio_write("usage: write <name> <content>\n");
         return;
     }
 
@@ -191,9 +203,9 @@ static void kterm_cmd_write(char* args) {
     content = &args[i + 1];
 
     if (kfs_write(name, content)) {
-        serial_print("ok\r\n");
+        kterm_result("ok\r\n");
     } else {
-        serial_print("fail\r\n");
+        kterm_result("fail\r\n");
     }
 }
 
@@ -207,7 +219,7 @@ static void kterm_cmd_append(char* args) {
     }
 
     if (!args[0] || !args[i]) {
-        serial_print("usage: append <name> <content>\r\n");
+        kio_write("usage: append <name> <content>\n");
         return;
     }
 
@@ -215,9 +227,9 @@ static void kterm_cmd_append(char* args) {
     content = &args[i + 1];
 
     if (kfs_append(name, content)) {
-        serial_print("ok\r\n");
+        kterm_result("ok\r\n");
     } else {
-        serial_print("fail\r\n");
+        kterm_result("fail\r\n");
     }
 }
 
@@ -235,7 +247,6 @@ static void kterm_exec(char* line, int* keep_running) {
 
     if (kterm_streq(line, "clear")) {
         kio_clear();
-        serial_print("screen cleared\r\n");
         return;
     }
 
@@ -271,13 +282,13 @@ static void kterm_exec(char* line, int* keep_running) {
         if (args[0]) {
             const char* data = kfs_read(args);
             if (data) {
-                serial_print(data);
-                serial_print("\r\n");
+                kterm_result(data);
+                kterm_result("\r\n");
             } else {
-                serial_print("not found\r\n");
+                kterm_result("not found\r\n");
             }
         } else {
-            serial_print("usage: read <name>\r\n");
+            kio_write("usage: read <name>\n");
         }
         return;
     }
@@ -285,9 +296,9 @@ static void kterm_exec(char* line, int* keep_running) {
     if (kterm_starts_with(line, "rm ")) {
         args = kterm_skip_cmd(line);
         if (args[0] && kfs_delete(args)) {
-            serial_print("ok\r\n");
+            kterm_result("ok\r\n");
         } else {
-            serial_print("fail\r\n");
+            kterm_result("fail\r\n");
         }
         return;
     }
@@ -306,16 +317,16 @@ static void kterm_exec(char* line, int* keep_running) {
 
     if (kterm_streq(line, "exit")) {
         *keep_running = 0;
-        serial_print("bye\r\n");
+        kterm_result("bye\r\n");
         return;
     }
 
     if (klua_cmd_run(line)) {
-        serial_print("lua command executed\r\n");
+        kterm_result("lua command executed\r\n");
         return;
     }
 
-    serial_print("unknown command\r\n");
+    kio_write("unknown command\n");
 }
 
 void kterm_run(void) {
@@ -325,16 +336,26 @@ void kterm_run(void) {
 
     serial_init();
 
-    kio_writeln("[kterm] serial terminal aberto em COM1");
-    serial_print("\r\n[kterm] serial terminal ready\r\n");
+    kio_writeln("[kterm] terminal na tela (VGA), entrada via teclado/COM1");
+    serial_print("\r\n[kterm] serial debug ready (COM1)\r\n");
     kterm_print_help();
     kterm_print_prompt();
 
     while (keep_running) {
-        char c = serial_getchar();
+        char c = 0;
+
+        kprocess_poll();
+
+        if (!keyboard_getchar_nonblock(&c)) {
+            if (serial_can_read()) {
+                c = serial_getchar();
+            } else {
+                continue;
+            }
+        }
 
         if (c == '\r' || c == '\n') {
-            serial_print("\r\n");
+            vga_putchar('\n');
             line[pos] = 0;
             kterm_exec(line, &keep_running);
             pos = 0;
@@ -346,19 +367,19 @@ void kterm_run(void) {
 
         if ((c == 8 || c == 127) && pos > 0) {
             pos--;
-            serial_print("\b \b");
+            vga_putchar('\b');
             continue;
         }
 
         if (c >= 32 && c <= 126) {
             if (pos + 1 >= KTERM_BUF_SIZE) {
-                serial_print("\r\n[error] line too long\r\n");
+                kio_write("\n[error] line too long\n");
                 pos = 0;
                 kterm_print_prompt();
                 continue;
             }
             line[pos++] = c;
-            serial_putchar(c);
+            vga_putchar(c);
         }
     }
 }
