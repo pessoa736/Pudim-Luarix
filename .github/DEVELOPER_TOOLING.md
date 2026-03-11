@@ -53,6 +53,9 @@ cat .github/instructions/buffer-overflow-safety.instructions.md
 - ✓ Arithmetic checks for overflow
 - ✓ Identifiers are ASCII-only `[a-zA-Z0-9_]`
 
+Note: driver implementations now live in `drives/` (for example `drives/serial.c`, `drives/vga.c`, `drives/keyboard.c`).
+Follow the same safety checklist for `drives/` code, even when hook rules are focused on `include/`.
+
 ### 4. Documentation Rules
 
 ```bash
@@ -61,7 +64,8 @@ cat .github/instructions/docs-location.instructions.md
 
 **Summary:**
 - `.md` files go in `docs/` or `.github/`
-- Only `README.md` allowed at root
+- Root exceptions currently used by hooks: `README.md`, `ATTRIBUTIONS.md`
+- `lua/README.md` is also allowed
 - Update internal links when moving docs
 
 ---
@@ -79,7 +83,7 @@ cat .github/instructions/docs-location.instructions.md
 | Standard | Applies To | Purpose |
 |----------|-----------|---------|
 | [buffer-overflow-safety.instructions.md](instructions/buffer-overflow-safety.instructions.md) | `include/**/*.{c,h}` | Memory safety, overflow prevention, Lua binding patterns |
-| [lua-first-kernel.instructions.md](instructions/lua-first-kernel.instructions.md) | `kernel.c`, `include/`, `lua/`, `docs/ROADMAP.md` | Lua-first kernel design principles |
+| [lua-first-kernel.instructions.md](instructions/lua-first-kernel.instructions.md) | `kernel.c`, `include/`, `drives/`, `lua/`, `ROADMAP.md` | Lua-first kernel design principles |
 | [docs-location.instructions.md](instructions/docs-location.instructions.md) | `**/*.md` | Documentation organization rules |
 
 ### Scripts
@@ -176,7 +180,7 @@ The hook validates:
 
 ### 2. **Documentation Location**
 ```
-✓ valid: docs/ROADMAP.md, .github/instructions/safety.md, README.md
+✓ valid: docs/ROADMAP.md, .github/instructions/safety.md, README.md, ATTRIBUTIONS.md, lua/README.md
 ✗ invalid: ROADMAP.md (root), doc/api.md (wrong folder)
 ```
 
@@ -231,6 +235,6 @@ bash .github/scripts/setup-hooks.sh
 
 ## Related Documentation
 
-- [docs/SECURITY.md](/docs/SECURITY.md) - Full security audit
-- [docs/ROADMAP.md](/docs/ROADMAP.md) - Kernel architecture & Lua APIs
+- [SECURITY.md](/SECURITY.md) - Full security audit
+- [ROADMAP.md](/ROADMAP.md) - Kernel architecture & Lua APIs
 - [docs/C_LIBS_ARCHITECTURE.md](/docs/C_LIBS_ARCHITECTURE.md) - Library design
