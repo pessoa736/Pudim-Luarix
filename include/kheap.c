@@ -295,3 +295,19 @@ size_t kheap_free_bytes(void) {
 
     return free_bytes;
 }
+
+size_t kheap_total_bytes(void) {
+    if (!heap_start) {
+        return 0;
+    }
+
+    size_t total_bytes = 0;
+    block_header_t* current = heap_start;
+
+    while (current) {
+        total_bytes += current->size;
+        current = current->next;
+    }
+
+    return total_bytes;
+}

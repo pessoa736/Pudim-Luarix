@@ -32,4 +32,9 @@ void kfree(void* ptr);
 */
 size_t kheap_free_bytes(void);
 
+/*
+Returns total usable bytes managed by the heap.
+*/
+size_t kheap_total_bytes(void);
+
 #endif
