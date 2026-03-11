@@ -43,10 +43,11 @@ memory.free(ptr)             -- libera
 memory.protect(area, flags)  -- read/write/exec
 memory.dump_stats()          -- info de memória
 ```
-- [~] Paginação ativa + page fault handler (handler #PF instalado; paginação por processo pendente)
-- [~] Proteção de memória (RW+NX com enforcement MMU em 4KB; isolamento por processo pendente)
+- [x] Paginação ativa + page fault handler (#PF com addr+err, per-process CR3 switch)
+- [x] Proteção de memória (RW+NX enforcement MMU em 4KB via kmemory)
 - [x] API Lua para consultar estado de memória (memory.dump_stats)
 - [x] API Lua para allocate/free/protect (backend heap + flags)
+- [ ] Demand paging / recuperação de page faults (handler atual halt)
 - **Impacto**: Isolamento real entre processos
 - **Esforço**: Alto | **Importância**: 10/10
 
@@ -100,7 +101,7 @@ sys.memory_free()      -- RAM livre
 - [x] Mapa de memória firmware (E820) exposto para Lua (count + entries)
 - [x] Comandos `sysstats` e `memmap` com saída detalhada
 - [x] Separação explícita entre RAM utilizável, heap e ROM/boot media
-- [ ] Clock/Timer (importante para scheduler)
+- [x] PIT timer interrupt-driven (100Hz) com uptime via `sys.uptime_ms()`
 - **Impacto**: Lua pode fazer coisas dependentes de tempo
 - **Esforço**: Baixo-Médio | **Importância**: 7/10
 
@@ -122,33 +123,37 @@ kbootlog_line("selftest", "process scheduler armed");
 ## 2. IMPORTANTE (Próximas Semanas - Kernel Foundation)
 
 ### 2.1 **Paginação e Proteção de Memória (suporta process.create)**
-- [ ] Ativar paging (já tem setup em kernel_entry.asm)
-- [~] Page fault handler com erro graceful (handler básico instalado, mensagem detalhada pendente)
-- [ ] Per-process page tables
-- [ ] Proteção read/write/exec bits
+- [x] Paging ativo (identity-mapped 2MB em kernel_entry.asm, split para 4KB sob demanda em kmemory)
+- [x] Page fault handler (#PF) com endereço de falha e error code detalhados (VGA+serial)
+- [x] Per-process page tables (PML4/PDPT/PD por processo, CR3 switch no scheduler)
+- [x] Proteção read/write/exec bits (RW+NX enforcement em 4KB via kmemory_apply_protection_4k)
+- [ ] Demand paging / recuperação de page faults (handler atual apenas imprime e halt)
 - **Impacto**: Isolamento entre processos Lua
 - **Esforço**: Alto | **Importância**: 10/10
 
 ### 2.2 **Scheduler Básico (suporta process.yield)**
-- [ ] Round-robin scheduler para Lua coroutines
-- [ ] PIT timer interrupt (100Hz default)
-- [ ] Context switching entre processos Lua
-- [ ] Preemption sem yield explícito (futuro)
+- [x] Round-robin scheduler cooperativo para Lua coroutines (kprocess_tick)
+- [x] PIT timer interrupt (100Hz) com contagem de ticks pendentes
+- [x] Context switching entre processos Lua (CR3 switch + lua_resume por processo)
+- [ ] Preemption sem yield explícito (timer seta flag mas não força context switch)
+- [ ] Scheduler integrado ao loop do terminal (atualmente roda ticks manuais no boot)
 - **Impacto**: Processo Lua 1 + Processo Lua 2 rodam "simultaneamente"
 - **Esforço**: Alto | **Importância**: 9/10
 
 ### 2.3 **Drivers Básicos para Lua**
-- [~] PS/2 Keyboard driver básico no kernel (polling no kterm) 
-- [ ] PS/2 Keyboard → Lua input API
-- [ ] PIT Timer → Lua sys.get_time()
+- [x] PS/2 Keyboard driver (polling com scancode→ASCII, shift support)
+- [ ] PS/2 Keyboard → Lua input API (tabela `keyboard.*` em Lua)
+- [x] PIT Timer interrupt-driven (100Hz, ktimer com ksys_tick + kprocess_request_tick)
 - [ ] Serial melhorado (interrupt-driven)
-- [~] VGA terminal melhorado (cursor hardware no fim da linha + scroll)
+- [x] VGA terminal com cursor hardware sincronizado + scroll automático
 - [ ] VGA com suporte a ANSI codes
 - **Impacto**: Input real + timing preciso
 - **Esforço**: Médio | **Importância**: 7/10
 
 ### 2.4 **Melhor Tratamento de Exceções**
-- [ ] Handlers para #GP, #PF, #DF detalhados
+- [x] Handler #PF detalhado (endereço + error code em hex, VGA+serial)
+- [x] Handler #DE (division error) com halt
+- [ ] Handlers para #GP, #DF detalhados
 - [ ] Stack trace/backtrace
 - [ ] Lua panic handler com debugging
 - **Impacto**: Diagnosticar erro em scripts fica fácil
@@ -235,15 +240,15 @@ process.get_capabilities()  -- capabilities
 
 ## Sugestão: Próximo Passo Recomendado
 
-**Paginação + Proteção de Memória** é a base para tudo mais. Depois:
+Com paginação, proteção de memória, scheduler cooperativo e PIT já funcionando, os próximos passos são:
 
-1. **Semana 1-2**: Ativar paging (você já tem setup em kernel_entry.asm)
-2. **Semana 3**: Estrutura básica de TCB e task switching
-3. **Semana 4**: Scheduler round-robin simples
-4. **Semana 5**: Syscalls básicas (exit, write, read)
-5. **Semana 6**: Começar driver de disco
+1. **Preemption real**: Timer IRQ forçar context switch (não apenas setar flag)
+2. **Scheduler no kterm**: Integrar `kprocess_tick` ao loop do terminal
+3. **Demand paging**: Page fault handler recuperar faltas em vez de halt
+4. **Keyboard Lua API**: Expor input do teclado como tabela Lua
+5. **Disco persistente**: Driver ATA/IDE + filesystem simples
 
-Isso te daria um kernel funcional com multitarefa isolada.
+Isso evoluiria o kernel de cooperativo para preemptivo com I/O real.
 
 ---
 
@@ -251,33 +256,36 @@ Isso te daria um kernel funcional com multitarefa isolada.
 
 ```
 [x] Boot x86_64 long mode
-[x] IDT/ISRs básicos
-[x] VGA + Serial I/O
-[x] Heap allocator
+[x] IDT/ISRs (#DE, #PF com endereço+error code, IRQ0)
+[x] VGA + Serial I/O (cursor hardware + scroll)
+[x] Heap allocator (kmalloc/kfree + kheap_total_bytes)
 [x] Lua VM integrada
-[x] Filesystem em memória
+[x] Filesystem em memória (kfs + alias fs.*)
 [x] Process API Lua (create/list/kill/yield/get_id)
-[x] Scheduler cooperativo de coroutines Lua
-[x] Isolamento de ambiente global por processo Lua
+[x] Scheduler cooperativo de coroutines Lua (round-robin)
+[x] Isolamento de ambiente global por processo Lua (_ENV + metatable)
 [x] Memory API Lua (allocate/free/protect/dump_stats)
-[x] Page fault handler (#PF) básico no IDT
-[x] Terminal interativo (kterm) na VGA
-[x] Entrada de teclado PS/2 básica (polling)
+[x] Page fault handler (#PF) detalhado (addr+err, VGA+serial, halt)
+[x] Paginação ativa (2MB identity-mapped, split 4KB sob demanda)
+[x] Proteção de memória RW+NX enforcement em 4KB (kmemory)
+[x] Per-process page tables com CR3 switch
+[x] PIT timer interrupt-driven (100Hz, ktimer)
+[x] Terminal interativo (kterm) na VGA com input keyboard+serial
+[x] Entrada de teclado PS/2 (polling, shift, scancode→ASCII)
 [x] Cursor VGA sincronizado (hardware cursor)
 [x] Security hardening (v0.1)
-[ ] Paginação ativa
-[~] Proteção de memória (API pronta, RW+NX com enforcement MMU em 4KB; isolamento por processo pendente)
-[~] Task/Process management (base cooperativa pronta, contexto/CR3 por processo pendente)
-[~] Scheduler (cooperativo pronto, preemptivo com PIT pendente)
+[x] Boot logging API unificada (VGA+serial, kbootlog)
+[x] Contagem regressiva pós-selftest antes do terminal
+[x] E820 map para Lua (sys.memory_map_* + comando memmap)
+[x] CPU vendor/brand e cores físicas em sysstats
+[ ] Preemption real (timer não força context switch)
+[ ] Demand paging (page fault → recuperação)
+[ ] Scheduler integrado ao loop do terminal
 [ ] System calls
 [ ] Disco persistente
-[ ] PIT timer interrupt-driven
 [ ] Serial interrupt-driven
 [ ] Input API Lua para teclado
-[x] Boot logging API unificada (VGA+serial)
-[x] Contagem regressiva pós-selftest antes do terminal
-[x] E820 map para Lua (`sys.memory_map_*` + comando `memmap`)
-[x] CPU vendor/brand e cores físicas em `sysstats`
+[ ] VGA ANSI codes
 [x] ROM total e tamanho da imagem do kernel reportados separadamente
 ```
 
@@ -293,7 +301,7 @@ Isso te daria um kernel funcional com multitarefa isolada.
 | **Isolamento** | Processos isolados por padrão | Coroutines isoladas (página table isolada) |
 | **Interatividade** | Shell + scripts | Lua REPL + scripts |
 | **Persistência** | Filesystem tradicional | KFS + disco (futuro) |
-| **Model de concorrência** | Preemption + signal handling | Scheduler de coroutines + yield explícito |
+| **Modelo de concorrência** | Preemption + signal handling | Scheduler de coroutines + yield explícito |
 | **Overhead** | Baixo (syscall direto) | Médio (Lua → C → hardware) |
 | **Flexibilidade** | Moderada (compilar código novo) | Alta (reconfigurar em Lua em runtime) |
 | **Objetivos** | Performance + compatibilidade | Segurança + simples + introspectável |
@@ -305,10 +313,10 @@ Isso te daria um kernel funcional com multitarefa isolada.
 ### **Week 1-2: Paginação (Prerequisito)**
 **Objetivo**: Ativar paging + page fault handler  
 **Tarefas**:
-- [ ] Ativar PAGING em kernel_entry.asm (ja tem setup basico)
-- [ ] Implementar page table allocator em C
+- [x] Ativar paging em kernel_entry.asm (2MB identity mapping)
+- [x] Implementar page table allocator/split em C (kmemory, 4KB sob demanda)
 - [x] Registrar handler para #PF (INT 14)
-- [ ] Testar: criar 2 página tables, mapear memoria, trocar CR3, confirmar isolamento
+- [x] Testar: criar 2 page tables, mapear memória, trocar CR3 e confirmar isolamento básico
 **Saídas**: Cada processo Lua terá sua própria página table  
 **Bloqueador para**: Todo o resto (memory protection = pré-requisito)
 
@@ -329,16 +337,15 @@ Isso te daria um kernel funcional com multitarefa isolada.
 ### **Week 4: Scheduler Basic + PIT Timer**
 **Objetivo**: Round-robin scheduler, time-slice básico  
 **Tarefas**:
-- [ ] Implementar PIT timer interrupt (INT 8, 100Hz padrão = 10ms time slice)
-  - pit_init(frequency) em C
-  - pit_isr em asm que chama scheduler
-- [ ] Scheduler C function: sched_tick()
-  - Salva estado do processo atual
-  - Move para próximo RUNNING process (round-robin)
-  - Carrega novo CR3 de página table
-  - Restaura contexto (RIP, RSP, etc)
-- [ ] Context save/restore (registros, RSP, RIP, CR3)
-- [ ] Testar: 2+ scripts rodando "simultaneamente", rodando em turnos 10ms cada
+- [x] Implementar PIT timer interrupt (IRQ0, 100Hz padrão = 10ms time slice)
+  - ktimer_init(frequency) em C
+  - irq0 em asm que chama ktimer_irq_handler
+- [x] Scheduler cooperativo C function: kprocess_tick()
+  - Itera processos RUNNING (round-robin)
+  - Faz CR3 switch por processo quando habilitado
+  - Executa lua_resume por processo pronto
+- [~] Context save/restore completo de CPU (RIP/RSP/regs) por preemption de timer
+- [x] Testar: 2+ scripts Lua rodando em round-robin cooperativo
 **Saídas**: Time-sharing funcional; sistemas operacionais "clássicos"
 
 ### **Week 5: Drivers + Input/Output Real**
@@ -348,7 +355,7 @@ Isso te daria um kernel funcional com multitarefa isolada.
 - [ ] PS/2 keyboard interrupt-driven
   - [ ] input buffer + keyscan normalization
   - [ ] Registrar Lua `input.read_key()`, `input.available()` ou event system
-- [ ] PIT timer → `sys.get_time()` (microseconds desde boot)
+- [~] PIT timer exposto para Lua (`sys.uptime_ms/us` pronto; `sys.get_time()` pendente)
 - [ ] Serial interrupt-driven (INT 4, COM1)
   - Preenche buffer em ISR, kterm lê async
 - [x] Cursor VGA no fim da linha (hardware cursor)
