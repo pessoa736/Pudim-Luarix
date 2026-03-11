@@ -17,19 +17,19 @@ entry:
     mov gs, ax
     mov ss, ax
     
-    mov esp, 0x90000
+    mov esp, 0x600000
     
     ; Setup paging tables for long mode
-    mov edi, 0x70000
+    mov edi, 0x200000
     mov ecx, 12288 / 4
     xor eax, eax
     rep stosd
     
-    mov dword [0x70000], 0x71000 | 3
-    mov dword [0x71000], 0x72000 | 3
+    mov dword [0x200000], 0x201000 | 3
+    mov dword [0x201000], 0x202000 | 3
     
     ; Map first 1GB with 2MB pages
-    mov edi, 0x72000
+    mov edi, 0x202000
     mov ecx, 512
     mov eax, 0x83
 .map_pages:
@@ -39,7 +39,7 @@ entry:
     add edi, 8
     loop .map_pages
     
-    mov eax, 0x70000
+    mov eax, 0x200000
     mov cr3, eax
     
     mov eax, cr4
@@ -48,7 +48,7 @@ entry:
     
     mov ecx, 0xC0000080
     rdmsr
-    or eax, 0x100
+    or eax, 0x900          ; LME | NXE
     wrmsr
     
     mov eax, cr0
@@ -69,6 +69,7 @@ entry64:
     mov rax, cr0
     and rax, ~0x4          ; clear EM
     or rax, 0x2            ; set MP
+    or rax, 0x10000        ; set WP to enforce write-protect in supervisor mode
     mov cr0, rax
 
     mov rax, cr4
@@ -81,7 +82,7 @@ entry64:
     out 0x21, al
     out 0xA1, al
     
-    mov rsp, 0x80000
+    mov rsp, 0x500000
     
     ; Zero BSS
     mov rdi, __bss_start

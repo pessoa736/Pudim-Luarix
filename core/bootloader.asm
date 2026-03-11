@@ -7,43 +7,138 @@ CODE_SEG equ 0x08
 CODE64_SEG equ 0x18
 DATA64_SEG equ 0x20
 
-PML4_TABLE equ 0x70000
-PDPT_TABLE equ 0x71000
-PD_TABLE   equ 0x72000
+PML4_TABLE equ 0x200000
+PDPT_TABLE equ 0x201000
+PD_TABLE   equ 0x202000
+BOOT_INFO_ADDR equ 0x5000
+E820_BUFFER equ 0x5100
+DRIVE_PARAMS_BUFFER equ 0x5200
+
+BOOT_INFO_MAGIC equ 0x584C4450
+BOOT_INFO_MAGIC_OFF equ 0
+BOOT_INFO_RAM_USABLE_LOW_OFF equ 4
+BOOT_INFO_RAM_USABLE_HIGH_OFF equ 8
+BOOT_INFO_BOOT_SECTORS_LOW_OFF equ 12
+BOOT_INFO_BOOT_SECTORS_HIGH_OFF equ 16
+BOOT_INFO_SECTOR_SIZE_OFF equ 20
+BOOT_INFO_E820_COUNT_OFF equ 22
+BOOT_INFO_E820_ENTRY_SIZE_OFF equ 24
+BOOT_INFO_E820_MAX_ENTRIES_OFF equ 26
+BOOT_INFO_KERNEL_BYTES_LOW_OFF equ 32
+BOOT_INFO_KERNEL_BYTES_HIGH_OFF equ 36
+BOOT_INFO_HEADER_SIZE equ 40
+BOOT_INFO_E820_MAX_ENTRIES equ 32
+BOOT_INFO_E820_ENTRY_SIZE equ 24
+BOOT_INFO_E820_ADDR equ 0x5300
 
 %ifndef KERNEL_SECTORS
 %define KERNEL_SECTORS 16
 %endif
 
+%ifndef KERNEL_BYTES
+%define KERNEL_BYTES (KERNEL_SECTORS * 512)
+%endif
+
 ; Jump to main bootloader code
 jmp start
 
-print_hex_nibble:
-    and al, 0x0F
-    cmp al, 9
-    jbe .digit
-    add al, 'A' - 10
-    jmp .emit
+boot_info_init:
+    push ax
+    push cx
+    push di
 
-.digit:
-    add al, '0'
+    xor ax, ax
+    mov di, BOOT_INFO_ADDR
+    mov cx, BOOT_INFO_HEADER_SIZE
+    cld
+    rep stosb
 
-.emit:
-    mov ah, 0x0E
-    int 0x10
+    mov dword [BOOT_INFO_ADDR + BOOT_INFO_MAGIC_OFF], BOOT_INFO_MAGIC
+    mov word [BOOT_INFO_ADDR + BOOT_INFO_E820_ENTRY_SIZE_OFF], BOOT_INFO_E820_ENTRY_SIZE
+    mov word [BOOT_INFO_ADDR + BOOT_INFO_E820_MAX_ENTRIES_OFF], BOOT_INFO_E820_MAX_ENTRIES
+    mov dword [BOOT_INFO_ADDR + BOOT_INFO_KERNEL_BYTES_LOW_OFF], KERNEL_BYTES
+    mov dword [BOOT_INFO_ADDR + BOOT_INFO_KERNEL_BYTES_HIGH_OFF], 0
+
+    pop di
+    pop cx
+    pop ax
     ret
 
-print_hex8:
-    push bx
+boot_info_detect_memory:
+    pushad
 
-    mov bl, al
-    shr al, 4
-    call print_hex_nibble
+    xor ebx, ebx
+    xor bp, bp
 
-    mov al, bl
-    call print_hex_nibble
+.next_entry:
+    mov di, E820_BUFFER
+    mov eax, 0xE820
+    mov edx, 0x534D4150
+    mov ecx, 24
+    mov dword [di + 20], 1
+    int 0x15
+    jc .done
 
-    pop bx
+    cmp eax, 0x534D4150
+    jne .done
+
+    cmp bp, BOOT_INFO_E820_MAX_ENTRIES
+    jae .skip_store
+
+    movzx eax, bp
+    imul eax, eax, BOOT_INFO_E820_ENTRY_SIZE
+    mov edi, BOOT_INFO_E820_ADDR
+    add edi, eax
+    mov esi, E820_BUFFER
+    mov ecx, BOOT_INFO_E820_ENTRY_SIZE / 4
+    cld
+    rep movsd
+
+    inc bp
+    mov [BOOT_INFO_ADDR + BOOT_INFO_E820_COUNT_OFF], bp
+
+.skip_store:
+    cmp dword [E820_BUFFER + 16], 1
+    jne .continue
+
+    mov eax, dword [E820_BUFFER + 8]
+    add dword [BOOT_INFO_ADDR + BOOT_INFO_RAM_USABLE_LOW_OFF], eax
+    mov eax, dword [E820_BUFFER + 12]
+    adc dword [BOOT_INFO_ADDR + BOOT_INFO_RAM_USABLE_HIGH_OFF], eax
+
+.continue:
+    cmp ebx, 0
+    jne .next_entry
+
+.done:
+    popad
+    ret
+
+boot_info_detect_drive_size:
+    pushad
+
+    xor ax, ax
+    mov di, DRIVE_PARAMS_BUFFER
+    mov cx, 64
+    cld
+    rep stosb
+
+    mov word [DRIVE_PARAMS_BUFFER], 0x1E
+    mov dl, [boot_drive]
+    mov si, DRIVE_PARAMS_BUFFER
+    mov ah, 0x48
+    int 0x13
+    jc .done
+
+    mov eax, dword [DRIVE_PARAMS_BUFFER + 16]
+    mov dword [BOOT_INFO_ADDR + BOOT_INFO_BOOT_SECTORS_LOW_OFF], eax
+    mov eax, dword [DRIVE_PARAMS_BUFFER + 20]
+    mov dword [BOOT_INFO_ADDR + BOOT_INFO_BOOT_SECTORS_HIGH_OFF], eax
+    mov ax, word [DRIVE_PARAMS_BUFFER + 24]
+    mov word [BOOT_INFO_ADDR + BOOT_INFO_SECTOR_SIZE_OFF], ax
+
+.done:
+    popad
     ret
 
 start:
@@ -56,6 +151,10 @@ start:
     mov ss, ax
     mov sp, 0x7C00
     sti
+
+    call boot_info_init
+    call boot_info_detect_memory
+    call boot_info_detect_drive_size
 
     ; Ultra-early VRAM test (shows if we reach bootloader at all)
     mov ax, 0xB800
@@ -148,17 +247,9 @@ dap:
 
 [BITS 16]
 load_kernel_error:
-    mov bl, ah
-
     mov ah, 0x0E
     mov al, 'E'
     int 0x10
-
-    mov al, ' '
-    int 0x10
-
-    mov al, bl
-    call print_hex8
 
     jmp $
 
