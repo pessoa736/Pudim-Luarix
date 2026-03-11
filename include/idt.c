@@ -1,4 +1,32 @@
 #include "idt.h"
+#include "serial.h"
+
+static void idt_print_hex_u64(uint64_t value) {
+    char hex[] = "0123456789ABCDEF";
+    int shift;
+
+    vga_print("0x");
+
+    for (shift = 60; shift >= 0; shift -= 4) {
+        uint8_t nibble = (uint8_t)((value >> (uint64_t)shift) & 0xFull);
+        char c[2];
+        c[0] = hex[nibble];
+        c[1] = 0;
+        vga_print(c);
+    }
+}
+
+static void idt_serial_print_hex_u64(uint64_t value) {
+    char hex[] = "0123456789ABCDEF";
+    int shift;
+
+    serial_print("0x");
+
+    for (shift = 60; shift >= 0; shift -= 4) {
+        uint8_t nibble = (uint8_t)((value >> (uint64_t)shift) & 0xFull);
+        serial_putchar(hex[nibble]);
+    }
+}
 
 #define IDT_ENTRIES 256
 #define KERNEL_CS 0x18
@@ -45,6 +73,25 @@ void load_IDT(void) {
 void division_error_handler(void){
     vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
     vga_print("Zero Division Error");
+
+    while (1) {
+        asm volatile ("hlt");
+    }
+}
+
+void page_fault_handler(uint64_t fault_addr, uint64_t error_code){
+    vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+    vga_print("Page Fault addr=");
+    idt_print_hex_u64(fault_addr);
+    vga_print(" err=");
+    idt_print_hex_u64(error_code);
+    vga_print("\n");
+
+    serial_print("[pf] addr=");
+    idt_serial_print_hex_u64(fault_addr);
+    serial_print(" err=");
+    idt_serial_print_hex_u64(error_code);
+    serial_print("\r\n");
 
     while (1) {
         asm volatile ("hlt");
