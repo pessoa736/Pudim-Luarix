@@ -52,8 +52,8 @@ meu objetivo inicial era fazer o kernel do zero a mão. porem assim que
 fiz a fork, comecei a pedir ajuda ao copilot para entender o que tinha 
 no codigo. quando me vi ja estava com 107 arquivos criados com o copilot.
 
-essa é minha primeira vez tentando fazer um kernel, e acho que meu nivel 
-que preciso estudar mais antes de começa a de fato fazer tudo a mão.
+essa é minha primeira vez tentando fazer um kernel, e acho que preciso 
+estudar mais antes de começa a de fato fazer tudo a mão.
 
 então cheguei a decisão que vou continuar mexendo nesse repor a ter
 cansar dele. provavelmente tentarei fazer do zero no futuro (a mão)
