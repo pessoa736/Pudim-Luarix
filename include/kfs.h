@@ -1,0 +1,19 @@
+#ifndef KFS_H
+#define KFS_H
+
+#include "stddef.h"
+
+void kfs_init(void);
+void kfs_clear(void);
+
+int kfs_write(const char* name, const char* content);
+int kfs_append(const char* name, const char* content);
+const char* kfs_read(const char* name);
+int kfs_delete(const char* name);
+int kfs_exists(const char* name);
+
+size_t kfs_size(const char* name);
+size_t kfs_count(void);
+const char* kfs_name_at(size_t index);
+
+#endif
