@@ -17,6 +17,8 @@ disponibilizou no video, mais pretendo ir melhorando o sistema aos
 poucos.
 
 
+
+
 [19:29 - 10/03/2026]
 
 A fork.
@@ -24,6 +26,8 @@ A fork.
 decidi pegar fazer a fork do repositorio lowwryzen/laurix para usa-lo
 de base para o meu, ja que eu meu entendimento de assembly é minimo,
 e o resto eu desemrolo com o tempo.
+
+
 
 
 [19:35 - 10/03/2026]
@@ -36,3 +40,20 @@ fazendo um trocadinho com lua e pudim somado ao laurix. tomei essa
 decisão pois eu me sintiria muito mal se eu não referencia-se o
 repositorio original (mesmo sabendo que o projeto é MIT), e tbm pq 
 acho que tem mais personalidade que só PudimKernel.
+
+
+
+
+[00:12 - 11/03/26]
+
+infelimente usei IA
+
+meu objetivo inicial era fazer o kernel do zero a mão. porem assim que 
+fiz a fork, comecei a pedir ajuda ao copilot para entender o que tinha 
+no codigo. quando me vi ja estava com 107 arquivos criados com o copilot.
+
+essa é minha primeira vez tentando fazer um kernel, e acho que meu nivel 
+que preciso estudar mais antes de começa a de fato fazer tudo a mão.
+
+então cheguei a decisão que vou continuar mexendo nesse repor a ter
+cansar dele. provavelmente tentarei fazer do zero no futuro (a mão)
