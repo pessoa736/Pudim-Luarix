@@ -1,23 +1,30 @@
 ENTRY(entry)
 
+PHDRS
+{
+    text PT_LOAD FLAGS(5);
+    rodata PT_LOAD FLAGS(4);
+    data PT_LOAD FLAGS(6);
+}
+
 SECTIONS
 {
-    . = 0x1000;
+    . = 0x10000;
 
     .text :
     {
         *(.text*)
-    }
+    } :text
 
     .rodata :
     {
         *(.rodata*)
-    }
+    } :rodata
 
     .data :
     {
         *(.data*)
-    }
+    } :data
 
     .bss :
     {
@@ -25,11 +32,7 @@ SECTIONS
         *(.bss*)
         *(COMMON)
         __bss_end = .;
-    }
+    } :data
 
-    .idt :
-    {
-        __idt_start__ =  0xF000;
-         
-    }
+    __kernel_end = .;
 }
