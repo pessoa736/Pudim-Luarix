@@ -11,5 +11,11 @@ O nome é uma fusão de Pudim (identidade do projeto), Lua (a linguagem a ser in
 ## Creditos
 
 - **lowwryzen** — pelo repositório [laurix](https://github.com/lowwryzen/laurix), que serve de base para este projeto, e pelo vídeo que motivou o desenvolvimento.
+- **Lua Team** — pela linguagem [Lua](https://www.lua.org/), distribuída sob licença MIT. Lua 5.5.0 é integrada a este kernel para fornecer a camada de sistema.
 
 Este projeto é distribuído sob a licença MIT.
+
+### Licenças de Terceiros
+
+- [Lua License](lua/LICENSE_LUA) — MIT License
+- [laurix License](https://github.com/lowwryzen/laurix/blob/main/LICENSE) — MIT License
