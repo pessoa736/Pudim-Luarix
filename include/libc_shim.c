@@ -1,6 +1,11 @@
 #include "utypes.h"
 #include "stddef.h"
 
+typedef __builtin_va_list va_list;
+#define va_start(ap, last) __builtin_va_start(ap, last)
+#define va_arg(ap, type) __builtin_va_arg(ap, type)
+#define va_end(ap) __builtin_va_end(ap)
+
 int abs(int x) {
     return (x < 0) ? -x : x;
 }
@@ -307,30 +312,169 @@ struct lconv* localeconv(void) {
     return &lc;
 }
 
+static void shim_append_char(char* str, size_t size, size_t* j, char c) {
+    if (*j + 1 < size) {
+        str[*j] = c;
+        (*j)++;
+    }
+}
+
+static void shim_append_str(char* str, size_t size, size_t* j, const char* s) {
+    size_t i = 0;
+
+    if (!s) {
+        s = "(null)";
+    }
+
+    while (s[i]) {
+        shim_append_char(str, size, j, s[i]);
+        i++;
+    }
+}
+
+static void shim_append_u64_base10(char* str, size_t size, size_t* j, uint64_t value) {
+    char tmp[32];
+    size_t n = 0;
+    size_t k;
+
+    if (value == 0) {
+        shim_append_char(str, size, j, '0');
+        return;
+    }
+
+    while (value > 0 && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+
+    k = n;
+    while (k > 0) {
+        k--;
+        shim_append_char(str, size, j, tmp[k]);
+    }
+}
+
+static void shim_append_i64_base10(char* str, size_t size, size_t* j, long long value) {
+    uint64_t abs_value;
+
+    if (value < 0) {
+        shim_append_char(str, size, j, '-');
+        abs_value = (uint64_t)(-(value + 1)) + 1;
+    } else {
+        abs_value = (uint64_t)value;
+    }
+
+    shim_append_u64_base10(str, size, j, abs_value);
+}
+
 int snprintf(char* str, size_t size, const char* fmt, ...) {
     size_t i = 0;
     size_t j = 0;
+    va_list ap;
 
-    if (size == 0) {
+    if (!str || !fmt || size == 0) {
         return 0;
     }
 
-    while (fmt[i] && j + 1 < size) {
-        if (fmt[i] == '%' && fmt[i + 1]) {
-            if (fmt[i + 1] == '%') {
-                str[j++] = '%';
-                i += 2;
-                continue;
-            }
-            str[j++] = '?';
-            i += 2;
+    va_start(ap, fmt);
+
+    while (fmt[i]) {
+        if (fmt[i] != '%') {
+            shim_append_char(str, size, &j, fmt[i]);
+            i++;
             continue;
         }
 
-        str[j++] = fmt[i++];
+        i++;
+        if (!fmt[i]) {
+            break;
+        }
+
+        if (fmt[i] == '%') {
+            shim_append_char(str, size, &j, '%');
+            i++;
+            continue;
+        }
+
+        if (fmt[i] == 'l') {
+            int long_count = 1;
+            i++;
+            if (fmt[i] == 'l') {
+                long_count = 2;
+                i++;
+            }
+
+            if (fmt[i] == 'd' || fmt[i] == 'i') {
+                if (long_count == 1) {
+                    long v = va_arg(ap, long);
+                    shim_append_i64_base10(str, size, &j, (long long)v);
+                } else {
+                    long long v = va_arg(ap, long long);
+                    shim_append_i64_base10(str, size, &j, v);
+                }
+                i++;
+                continue;
+            }
+
+            if (fmt[i] == 'u') {
+                if (long_count == 1) {
+                    unsigned long v = va_arg(ap, unsigned long);
+                    shim_append_u64_base10(str, size, &j, (uint64_t)v);
+                } else {
+                    unsigned long long v = va_arg(ap, unsigned long long);
+                    shim_append_u64_base10(str, size, &j, (uint64_t)v);
+                }
+                i++;
+                continue;
+            }
+
+            shim_append_char(str, size, &j, '?');
+            if (long_count == 2) {
+                shim_append_char(str, size, &j, 'l');
+            }
+            shim_append_char(str, size, &j, 'l');
+            if (fmt[i]) {
+                shim_append_char(str, size, &j, fmt[i]);
+                i++;
+            }
+            continue;
+        }
+
+        if (fmt[i] == 'd' || fmt[i] == 'i') {
+            int v = va_arg(ap, int);
+            shim_append_i64_base10(str, size, &j, (long long)v);
+            i++;
+            continue;
+        }
+
+        if (fmt[i] == 'u') {
+            unsigned int v = va_arg(ap, unsigned int);
+            shim_append_u64_base10(str, size, &j, (uint64_t)v);
+            i++;
+            continue;
+        }
+
+        if (fmt[i] == 'c') {
+            int c = va_arg(ap, int);
+            shim_append_char(str, size, &j, (char)c);
+            i++;
+            continue;
+        }
+
+        if (fmt[i] == 's') {
+            const char* s = va_arg(ap, const char*);
+            shim_append_str(str, size, &j, s);
+            i++;
+            continue;
+        }
+
+        shim_append_char(str, size, &j, '?');
+        shim_append_char(str, size, &j, fmt[i]);
+        i++;
     }
 
     str[j] = '\0';
+    va_end(ap);
     return (int)j;
 }
 
