@@ -8,6 +8,8 @@ A ideia surgiu de uma vontade antiga de entender como kernels funcionam por dent
 
 O nome é uma fusão de Pudim (identidade do projeto), Lua (a linguagem a ser integrada) e rix (herdado do laurix).
 
+- caso queira ver o progresso, leia journal.txt.
+
 ## Creditos
 
 - **lowwryzen** — pelo repositório [laurix](https://github.com/lowwryzen/laurix), que serve de base para este projeto, e pelo vídeo que motivou o desenvolvimento.
