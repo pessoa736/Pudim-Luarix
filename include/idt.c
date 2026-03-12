@@ -71,6 +71,16 @@ void load_IDT(void) {
     asm volatile ("lidt %0" : : "m"(idtr));
 }
 
+int idt_entry_present(uint8_t index) {
+    uint64_t addr;
+
+    addr = (uint64_t)idt[index].offset_low
+         | ((uint64_t)idt[index].offset_mid << 16)
+         | ((uint64_t)idt[index].offset_high << 32);
+
+    return addr != 0;
+}
+
 void division_error_handler(void){
     vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
     vga_print("Zero Division Error");

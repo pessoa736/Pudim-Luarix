@@ -12,6 +12,7 @@ extern void ir8(void);
 extern void ir13(void);
 extern void irq0(void);
 extern void irq4(void);
+extern void irq12(void);
 extern void ir14(void);
 
 void division_error_handler(void);
@@ -19,5 +20,7 @@ void general_protection_handler(uint64_t error_code, uint64_t rip, void* regs);
 void double_fault_handler(uint64_t error_code, uint64_t rip, void* regs);
 void page_fault_handler(uint64_t fault_addr, uint64_t error_code);
 
+/* Returns 1 if the IDT entry at 'index' has a non-zero handler address */
+int idt_entry_present(uint8_t index);
 
 #endif
