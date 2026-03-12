@@ -1,13 +1,16 @@
 #include "include/vga.h"
 #include "include/idt.h"
+#include "include/ata.h"
 #include "include/kbootlog.h"
 #include "include/kheap.h"
 #include "include/kio.h"
 #include "include/APISLua/klua.h"
+#include "include/kfs.h"
 #include "include/kprocess.h"
 #include "include/kterm.h"
 #include "include/ktimer.h"
 #include "include/serial.h"
+#include "include/kevent.h"
 #include "include/ksys.h"
 
 static void u32_to_str(unsigned int value, char* out, unsigned int out_size) {
@@ -113,15 +116,32 @@ void lau_main() {
     vga_print("Pudim-Luarix x86_64 \n");
 
     set_idt_entry(&ir0, (uint8_t)0x8E, (uint8_t)0);
+    set_idt_entry(&ir8, (uint8_t)0x8E, (uint8_t)8);
+    set_idt_entry(&ir13, (uint8_t)0x8E, (uint8_t)13);
     set_idt_entry(&ir14, (uint8_t)0x8E, (uint8_t)14);
     set_idt_entry(&irq0, (uint8_t)0x8E, (uint8_t)32);
+    set_idt_entry(&irq4, (uint8_t)0x8E, (uint8_t)36);
     load_IDT();
     ktimer_init(100);
+    serial_init_irq();
     asm volatile("sti");
     kbootlog_line("idt", "OK");
 
     heap_self_test();
     ksys_init();
+    kevent_init();
+    kbootlog_line("event", "init OK");
+
+    if (ata_init()) {
+        kbootlog_line("ata", "storage disk OK");
+        if (kfs_persist_load()) {
+            kbootlog_line("kfs", "loaded from disk");
+        } else {
+            kbootlog_line("kfs", "no saved data (fresh disk)");
+        }
+    } else {
+        kbootlog_line("ata", "no storage disk");
+    }
 
     if (klua_init()) {
         kbootlog_line("lua", "init OK");
@@ -133,6 +153,19 @@ void lau_main() {
             "print('boot.log:', kfs.read('boot.log')); "
             "print('boot.log size:', kfs.size('boot.log')); "
         );
+
+        /* Run init.lua from filesystem if present */
+        if (kfs_exists("init.lua")) {
+            const char* init_code = kfs_read("init.lua");
+            if (init_code) {
+                kbootlog_line("init", "running init.lua");
+                if (klua_run_quiet(init_code)) {
+                    kbootlog_line("init", "OK");
+                } else {
+                    kbootlog_line("init", "FAIL");
+                }
+            }
+        }
 
         {
             unsigned int p1;

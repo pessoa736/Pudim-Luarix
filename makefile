@@ -15,6 +15,8 @@ LDFLAGS = -m elf_$(ARCHITE) -T linker.ld
 BUILD = build
 INCLUDE = include
 DRIVES = drives
+STORAGE = $(BUILD)/storage.img
+STORAGE_SIZE = 4M
 
 BOOTLOADER = core/bootloader.asm
 KENTRY	   = core/kernel_entry.asm
@@ -22,7 +24,8 @@ KERNEL	   = kernel.c
 
 CFILES_INCLUDE := $(wildcard include/*.c) $(wildcard include/APISLua/*.c)
 CFILES_DRIVES  := $(wildcard drives/*.c)
-CFILES   := $(CFILES_INCLUDE) $(CFILES_DRIVES)
+CFILES_FS      := $(wildcard fs/*/*.c)
+CFILES   := $(CFILES_INCLUDE) $(CFILES_DRIVES) $(CFILES_FS)
 ASMFILES := $(wildcard include/*.asm)
 
 LUA_SRC = lua/src
@@ -36,7 +39,8 @@ ASMFILES := $(filter-out include/idt_config.asm,$(ASMFILES))
 
 OBJS_C_INCLUDE := $(patsubst include/%.c,$(BUILD)/%.o,$(CFILES_INCLUDE))
 OBJS_C_DRIVES  := $(patsubst drives/%.c,$(BUILD)/%.o,$(CFILES_DRIVES))
-OBJS_C         := $(OBJS_C_INCLUDE) $(OBJS_C_DRIVES)
+OBJS_C_FS      := $(patsubst fs/%.c,$(BUILD)/fs_%.o,$(CFILES_FS))
+OBJS_C         := $(OBJS_C_INCLUDE) $(OBJS_C_DRIVES) $(OBJS_C_FS)
 OBJS_ASM := $(patsubst include/%.asm,$(BUILD)/%.o,$(ASMFILES))
 
 all: compile
@@ -70,6 +74,10 @@ $(BUILD)/%.o: drives/%.c | $(BUILD)
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(INCLUDE) $< -o $@
 
+$(BUILD)/fs_%.o: fs/%.c | $(BUILD)
+	mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I$(INCLUDE) -Ifs $< -o $@
+
 $(BUILD)/lua_%.o: $(LUA_SRC)/%.c | $(BUILD)
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(LUA_SRC) $< -o $@
@@ -96,8 +104,11 @@ $(BUILD)/kernel.img: $(BUILD)/bootloader.bin $(BUILD)/kernel.bin
 	truncate -s $$(((1 + $$SECTORS) * 512)) $@
 
 
-run: $(BUILD)/kernel.img
-	qemu-system-$(ARCHITE) -drive format=raw,file=$< -serial stdio -smp 2
+run: $(BUILD)/kernel.img $(STORAGE)
+	qemu-system-$(ARCHITE) -drive format=raw,file=$< -drive format=raw,file=$(STORAGE),if=ide,index=1 -serial stdio -smp 2 -m 2G
+
+$(STORAGE):
+	dd if=/dev/zero of=$@ bs=1 count=0 seek=$(STORAGE_SIZE) 2>/dev/null
 
 clean:
 	rm -rf $(BUILD)
