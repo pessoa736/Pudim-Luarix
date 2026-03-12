@@ -1,10 +1,11 @@
 #include "kmemory.h"
-#include "kheap.h"
+#include "stddef.h"
 
 #define KMEMORY_PD_BASE_ADDR 0x202000ull
 #define KMEMORY_PD_ENTRIES 512u
 #define KMEMORY_PAGE_SIZE_2M 0x200000ull
 #define KMEMORY_PAGE_SIZE_4K 0x1000ull
+#define KMEMORY_PAGE_POOL_PAGES 256u
 #define KMEMORY_PT_ENTRIES 512u
 #define KMEMORY_PT_POOL_PAGES 8u
 #define KMEMORY_PDE_FLAG_PRESENT 0x1ull
@@ -12,6 +13,11 @@
 #define KMEMORY_PDE_FLAG_PS 0x80ull
 #define KMEMORY_PTE_FLAG_NX (1ull << 63)
 #define KMEMORY_ADDR_MASK 0x000FFFFFFFFFF000ull
+#define KMEMORY_PAGE_FAULT_PRESENT_BIT 0x1ull
+#define KMEMORY_PML4_INDEX_MASK 0x1FFull
+#define KMEMORY_PDPT_INDEX_MASK 0x1FFull
+#define KMEMORY_PD_INDEX_MASK 0x1FFull
+#define KMEMORY_NULL_GUARD_BYTES 0x1000ull
 
 typedef struct {
     uint32_t pd_index;
@@ -28,8 +34,46 @@ typedef struct {
 
 static kmemory_block_t g_kmemory_blocks[KMEMORY_MAX_BLOCKS];
 static uint64_t g_kmemory_total = 0;
+static uint8_t g_kmemory_page_pool[KMEMORY_PAGE_POOL_PAGES][KMEMORY_PAGE_SIZE_4K] __attribute__((aligned(4096)));
+static uint8_t g_kmemory_page_used[KMEMORY_PAGE_POOL_PAGES];
 static uint64_t g_kmemory_pt_pool[KMEMORY_PT_POOL_PAGES][KMEMORY_PT_ENTRIES] __attribute__((aligned(4096)));
 static kmemory_pt_slot_t g_kmemory_pt_slots[KMEMORY_PT_POOL_PAGES];
+
+static uint64_t kmemory_align_up_page(uint64_t size) {
+    if (size == 0) {
+        return 0;
+    }
+
+    if (size > (~0ull) - (KMEMORY_PAGE_SIZE_4K - 1ull)) {
+        return 0;
+    }
+
+    return (size + (KMEMORY_PAGE_SIZE_4K - 1ull)) & ~(KMEMORY_PAGE_SIZE_4K - 1ull);
+}
+
+static int kmemory_pool_find_span(uint32_t pages_needed, uint32_t* out_start) {
+    uint32_t start = 0;
+
+    if (!out_start || pages_needed == 0 || pages_needed > KMEMORY_PAGE_POOL_PAGES) {
+        return 0;
+    }
+
+    while (start + pages_needed <= KMEMORY_PAGE_POOL_PAGES) {
+        uint32_t offset = 0;
+        while (offset < pages_needed && !g_kmemory_page_used[start + offset]) {
+            offset++;
+        }
+
+        if (offset == pages_needed) {
+            *out_start = start;
+            return 1;
+        }
+
+        start += offset + 1u;
+    }
+
+    return 0;
+}
 
 static inline uint64_t* kmemory_pd_base(void) {
     return (uint64_t*)(size_t)KMEMORY_PD_BASE_ADDR;
@@ -44,6 +88,12 @@ static inline void kmemory_flush_tlb_all(void) {
 
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
     asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+}
+
+static inline uint64_t kmemory_read_cr3(void) {
+    uint64_t value;
+    asm volatile("mov %%cr3, %0" : "=r"(value));
+    return value;
 }
 
 static int kmemory_find_or_alloc_pt_slot(uint32_t pd_index, uint64_t** out_table) {
@@ -257,44 +307,72 @@ void kmemory_init(void) {
         g_kmemory_pt_slots[i].table = 0;
     }
 
+    for (i = 0; i < KMEMORY_PAGE_POOL_PAGES; i++) {
+        g_kmemory_page_used[i] = 0;
+    }
+
     g_kmemory_total = 0;
 }
 
 void* kmemory_allocate(uint64_t size) {
     uint32_t i;
+    uint32_t start_page;
+    uint32_t page_count;
+    uint64_t alloc_size;
     void* ptr;
 
     if (size == 0) {
         return 0;
     }
 
-    if (g_kmemory_total > (uint64_t)(~0ull) - size) {
+    alloc_size = kmemory_align_up_page(size);
+    if (alloc_size == 0) {
+        return 0;
+    }
+
+    page_count = (uint32_t)(alloc_size / KMEMORY_PAGE_SIZE_4K);
+    if (page_count == 0 || page_count > KMEMORY_PAGE_POOL_PAGES) {
+        return 0;
+    }
+
+    if (g_kmemory_total > (uint64_t)(~0ull) - alloc_size) {
+        return 0;
+    }
+
+    if (!kmemory_pool_find_span(page_count, &start_page)) {
         return 0;
     }
 
     for (i = 0; i < KMEMORY_MAX_BLOCKS; i++) {
         if (!g_kmemory_blocks[i].used) {
-            ptr = kmalloc((size_t)size);
-            if (!ptr) {
-                return 0;
+            uint32_t page_index;
+
+            for (page_index = 0; page_index < page_count; page_index++) {
+                g_kmemory_page_used[start_page + page_index] = 1;
             }
 
+            ptr = (void*)&g_kmemory_page_pool[start_page][0];
+
             g_kmemory_blocks[i].ptr = ptr;
-            g_kmemory_blocks[i].size = size;
+            g_kmemory_blocks[i].size = alloc_size;
             g_kmemory_blocks[i].flags = KMEMORY_FLAG_READ | KMEMORY_FLAG_WRITE;
             g_kmemory_blocks[i].used = 1;
-            g_kmemory_total += size;
+            g_kmemory_total += alloc_size;
 
             if (!kmemory_apply_protection_4k(
                     (uint64_t)(size_t)g_kmemory_blocks[i].ptr,
                     g_kmemory_blocks[i].size,
                     g_kmemory_blocks[i].flags)) {
-                g_kmemory_total -= size;
+                uint32_t rollback_index;
+
+                g_kmemory_total -= alloc_size;
                 g_kmemory_blocks[i].ptr = 0;
                 g_kmemory_blocks[i].size = 0;
                 g_kmemory_blocks[i].flags = 0;
                 g_kmemory_blocks[i].used = 0;
-                kfree(ptr);
+                for (rollback_index = 0; rollback_index < page_count; rollback_index++) {
+                    g_kmemory_page_used[start_page + rollback_index] = 0;
+                }
                 return 0;
             }
 
@@ -314,13 +392,29 @@ int kmemory_free(void* ptr) {
 
     for (i = 0; i < KMEMORY_MAX_BLOCKS; i++) {
         if (g_kmemory_blocks[i].used && g_kmemory_blocks[i].ptr == ptr) {
+            uint32_t start_page;
+            uint32_t page_count;
+            uint32_t page_index;
+
             if (g_kmemory_total >= g_kmemory_blocks[i].size) {
                 g_kmemory_total -= g_kmemory_blocks[i].size;
             } else {
                 g_kmemory_total = 0;
             }
 
-            kfree(ptr);
+            start_page = (uint32_t)(((uint8_t*)ptr - &g_kmemory_page_pool[0][0]) / KMEMORY_PAGE_SIZE_4K);
+            page_count = (uint32_t)(g_kmemory_blocks[i].size / KMEMORY_PAGE_SIZE_4K);
+
+            if (page_count == 0) {
+                page_count = 1;
+            }
+
+            if (start_page < KMEMORY_PAGE_POOL_PAGES) {
+                for (page_index = 0; page_index < page_count && (start_page + page_index) < KMEMORY_PAGE_POOL_PAGES; page_index++) {
+                    g_kmemory_page_used[start_page + page_index] = 0;
+                }
+            }
+
             g_kmemory_blocks[i].ptr = 0;
             g_kmemory_blocks[i].size = 0;
             g_kmemory_blocks[i].flags = 0;
@@ -356,6 +450,72 @@ int kmemory_protect(void* ptr, uint32_t flags) {
     }
 
     return 0;
+}
+
+int kmemory_handle_page_fault(uint64_t fault_addr, uint64_t error_code) {
+    uint64_t cr3;
+    uint64_t* pml4;
+    uint64_t pml4e;
+    uint64_t* pdpt;
+    uint64_t pdpte;
+    uint64_t* pd;
+    uint64_t pde;
+    uint64_t map_base;
+    uint64_t pml4_index;
+    uint64_t pdpt_index;
+    uint64_t pd_index;
+
+    if ((error_code & KMEMORY_PAGE_FAULT_PRESENT_BIT) != 0) {
+        return 0;
+    }
+
+    if (fault_addr < KMEMORY_NULL_GUARD_BYTES) {
+        return 0;
+    }
+
+    pml4_index = (fault_addr >> 39) & KMEMORY_PML4_INDEX_MASK;
+    pdpt_index = (fault_addr >> 30) & KMEMORY_PDPT_INDEX_MASK;
+    pd_index = (fault_addr >> 21) & KMEMORY_PD_INDEX_MASK;
+
+    if (pml4_index != 0 || pdpt_index != 0) {
+        return 0;
+    }
+
+    cr3 = kmemory_read_cr3();
+    pml4 = (uint64_t*)(size_t)(cr3 & KMEMORY_ADDR_MASK);
+    if (!pml4) {
+        return 0;
+    }
+
+    pml4e = pml4[pml4_index];
+    if ((pml4e & KMEMORY_PDE_FLAG_PRESENT) == 0) {
+        return 0;
+    }
+
+    pdpt = (uint64_t*)(size_t)(pml4e & KMEMORY_ADDR_MASK);
+    if (!pdpt) {
+        return 0;
+    }
+
+    pdpte = pdpt[pdpt_index];
+    if ((pdpte & KMEMORY_PDE_FLAG_PRESENT) == 0) {
+        return 0;
+    }
+
+    pd = (uint64_t*)(size_t)(pdpte & KMEMORY_ADDR_MASK);
+    if (!pd) {
+        return 0;
+    }
+
+    pde = pd[pd_index];
+    if ((pde & KMEMORY_PDE_FLAG_PRESENT) != 0) {
+        return 0;
+    }
+
+    map_base = fault_addr & ~(KMEMORY_PAGE_SIZE_2M - 1ull);
+    pd[pd_index] = map_base | KMEMORY_PDE_FLAG_PRESENT | KMEMORY_PDE_FLAG_RW | KMEMORY_PDE_FLAG_PS;
+    kmemory_invlpg((void*)(size_t)(fault_addr & ~(KMEMORY_PAGE_SIZE_4K - 1ull)));
+    return 1;
 }
 
 uint64_t kmemory_total_allocated(void) {

@@ -12,6 +12,7 @@ void kmemory_init(void);
 void* kmemory_allocate(uint64_t size);
 int kmemory_free(void* ptr);
 int kmemory_protect(void* ptr, uint32_t flags);
+int kmemory_handle_page_fault(uint64_t fault_addr, uint64_t error_code);
 uint64_t kmemory_total_allocated(void);
 uint32_t kmemory_block_count(void);
 void kmemory_dump_stats(char* out, uint32_t out_size);
