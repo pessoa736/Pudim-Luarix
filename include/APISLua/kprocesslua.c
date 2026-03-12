@@ -5,7 +5,18 @@ static int kprocesslua_create(lua_State* L) {
     const char* script;
     int pid;
 
-    if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
+    if (lua_gettop(L) != 1) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    if (lua_isfunction(L, 1)) {
+        pid = kprocess_create_function(L, 1);
+        lua_pushinteger(L, (lua_Integer)pid);
+        return 1;
+    }
+
+    if (!lua_isstring(L, 1)) {
         lua_pushinteger(L, 0);
         return 1;
     }

@@ -14,10 +14,14 @@
 #define KPROCESS_PAGE_PRESENT 0x1ull
 #define KPROCESS_PAGE_RW 0x2ull
 #define KPROCESS_ADDR_MASK 0x000FFFFFFFFFF000ull
-#define KPROCESS_ENABLE_CR3_SWITCH 1
+#define KPROCESS_ENABLE_CR3_SWITCH 0
 
 #ifndef KPROCESS_POLL_BUDGET
 #define KPROCESS_POLL_BUDGET 4u
+#endif
+
+#ifndef KPROCESS_PREEMPT_INSTRUCTIONS
+#define KPROCESS_PREEMPT_INSTRUCTIONS 4096u
 #endif
 
 extern uint8_t __kernel_end;
@@ -59,6 +63,23 @@ static void kprocess_copy_page_table(uint64_t* dst, const uint64_t* src) {
     for (i = 0; i < KPROCESS_PT_ENTRIES; i++) {
         dst[i] = src[i];
     }
+}
+
+static int kprocess_streq(const char* a, const char* b) {
+    uint32_t i = 0;
+
+    if (!a || !b) {
+        return 0;
+    }
+
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+
+    return a[i] == b[i];
 }
 
 static int kprocess_setup_address_space(unsigned int index) {
@@ -115,6 +136,17 @@ static int kprocess_setup_chunk_env(lua_State* thread, unsigned int pid) {
         return 0;
     }
 
+    upname = lua_getupvalue(thread, -1, 1);
+    if (!upname) {
+        return 1;
+    }
+
+    lua_pop(thread, 1);
+
+    if (!kprocess_streq(upname, "_ENV")) {
+        return 1;
+    }
+
     /* Create isolated env with fallback to base globals via __index = _G. */
     lua_createtable(thread, 0, 2);
     lua_pushinteger(thread, (lua_Integer)pid);
@@ -125,8 +157,7 @@ static int kprocess_setup_chunk_env(lua_State* thread, unsigned int pid) {
     lua_setfield(thread, -2, "__index");
     lua_setmetatable(thread, -2);
 
-    upname = lua_setupvalue(thread, -2, 1);
-    if (!upname) {
+    if (!lua_setupvalue(thread, -2, 1)) {
         return 0;
     }
 
@@ -189,6 +220,33 @@ static void kprocess_strcopy(char* dst, unsigned int dst_size, const char* src) 
     dst[i] = 0;
 }
 
+static void kprocess_u32_to_str(unsigned int value, char* out, unsigned int out_size) {
+    char tmp[16];
+    unsigned int n = 0;
+    unsigned int p = 0;
+
+    if (!out || out_size < 2) {
+        return;
+    }
+
+    if (value == 0) {
+        out[0] = '0';
+        out[1] = 0;
+        return;
+    }
+
+    while (value > 0 && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+
+    while (n > 0 && p + 1 < out_size) {
+        out[p++] = tmp[--n];
+    }
+
+    out[p] = 0;
+}
+
 static unsigned int kprocess_strlen_bounded(const char* s, unsigned int max_len_plus_one) {
     unsigned int n = 0;
 
@@ -244,6 +302,62 @@ static void kprocess_release_slot(unsigned int index) {
     g_kprocess_entries[index].state = KPROCESS_STATE_DEAD;
     g_kprocess_entries[index].thread = 0;
     g_kprocess_entries[index].cr3_root = 0;
+}
+
+static void kprocess_print_lua_traceback(lua_State* L) {
+    lua_Debug ar;
+    int level;
+
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    vga_print("  traceback:\n");
+    serial_print("  traceback:\r\n");
+
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    for (level = 0; level < 16; level++) {
+        if (!lua_getstack(L, level, &ar)) {
+            break;
+        }
+
+        lua_getinfo(L, "Snl", &ar);
+
+        vga_print("    ");
+        serial_print("    ");
+
+        if (ar.source && ar.source[0]) {
+            vga_print(ar.source);
+            serial_print(ar.source);
+        }
+
+        if (ar.currentline > 0) {
+            char linebuf[16];
+            kprocess_u32_to_str((unsigned int)ar.currentline, linebuf, sizeof(linebuf));
+            vga_print(":");
+            vga_print(linebuf);
+            serial_print(":");
+            serial_print(linebuf);
+        }
+
+        vga_print(": ");
+        serial_print(": ");
+
+        if (ar.name && ar.name[0]) {
+            vga_print("in '");
+            vga_print(ar.name);
+            vga_print("'");
+            serial_print("in '");
+            serial_print(ar.name);
+            serial_print("'");
+        } else if (ar.what && ar.what[0]) {
+            vga_print("in ");
+            vga_print(ar.what);
+            serial_print("in ");
+            serial_print(ar.what);
+        }
+
+        vga_print("\n");
+        serial_print("\r\n");
+    }
 }
 
 static void kprocess_set_error(unsigned int index, const char* prefix, const char* msg) {
@@ -348,12 +462,83 @@ int kprocess_create(const char* script) {
     if (load_rc != LUA_OK) {
         const char* err = lua_tostring(thread, -1);
         if (err) {
-            vga_print("[process] load error: ");
+            vga_print("process load error: ");
             vga_print(err);
             vga_print("\n");
         }
 
         lua_pop(thread, 1);
+        lua_pop(g_kprocess_main_lua, 1);
+        return 0;
+    }
+
+    g_kprocess_entries[slot].pid = g_kprocess_next_pid++;
+    g_kprocess_entries[slot].state = KPROCESS_STATE_READY;
+    g_kprocess_entries[slot].thread = thread;
+    g_kprocess_entries[slot].cr3_root = 0;
+
+    if (!kprocess_setup_address_space((unsigned int)slot)) {
+        lua_settop(thread, 0);
+        lua_pop(g_kprocess_main_lua, 1);
+        kprocess_release_slot((unsigned int)slot);
+        return 0;
+    }
+
+    if (!kprocess_setup_chunk_env(thread, g_kprocess_entries[slot].pid)) {
+        lua_settop(thread, 0);
+        lua_pop(g_kprocess_main_lua, 1);
+        kprocess_release_slot((unsigned int)slot);
+        return 0;
+    }
+
+    if (!kprocess_ensure_thread_table()) {
+        lua_pop(g_kprocess_main_lua, 1);
+        kprocess_release_slot((unsigned int)slot);
+        return 0;
+    }
+
+    lua_pushvalue(g_kprocess_main_lua, -2);
+    lua_rawseti(g_kprocess_main_lua, -2, (lua_Integer)g_kprocess_entries[slot].pid);
+
+    lua_pop(g_kprocess_main_lua, 2);
+
+    return (int)g_kprocess_entries[slot].pid;
+}
+
+int kprocess_create_function(lua_State* owner, int func_index) {
+    int slot;
+    lua_State* thread;
+    int abs_index;
+
+    if (!g_kprocess_main_lua || !owner) {
+        return 0;
+    }
+
+    if (owner != g_kprocess_main_lua) {
+        return 0;
+    }
+
+    abs_index = lua_absindex(owner, func_index);
+    if (!lua_isfunction(owner, abs_index)) {
+        return 0;
+    }
+
+    slot = kprocess_find_slot_by_state_not_dead();
+    if (slot < 0) {
+        return 0;
+    }
+
+    thread = lua_newthread(g_kprocess_main_lua);
+    if (!thread) {
+        lua_pop(g_kprocess_main_lua, 1);
+        return 0;
+    }
+
+    lua_pushvalue(owner, abs_index);
+    lua_xmove(owner, thread, 1);
+
+    if (!lua_isfunction(thread, -1)) {
+        lua_settop(thread, 0);
         lua_pop(g_kprocess_main_lua, 1);
         return 0;
     }
@@ -471,6 +656,11 @@ kprocess_state_t kprocess_state_of(unsigned int pid) {
     return g_kprocess_entries[slot].state;
 }
 
+static void kprocess_preempt_hook(lua_State* L, lua_Debug* ar) {
+    (void)ar;
+    lua_yield(L, 0);
+}
+
 int kprocess_tick(void) {
     unsigned int scanned = 0;
     unsigned int index = g_kprocess_last_index;
@@ -502,7 +692,10 @@ int kprocess_tick(void) {
             }
 #endif
 
+            lua_sethook(entry->thread, kprocess_preempt_hook,
+                        LUA_MASKCOUNT, KPROCESS_PREEMPT_INSTRUCTIONS);
             rc = lua_resume(entry->thread, NULL, 0, &nresults);
+            lua_sethook(entry->thread, NULL, 0, 0);
 
 #if KPROCESS_ENABLE_CR3_SWITCH
             if (entry->cr3_root != 0) {
@@ -519,7 +712,8 @@ int kprocess_tick(void) {
                 entry->state = KPROCESS_STATE_READY;
             } else {
                 const char* err = lua_tostring(entry->thread, -1);
-                kprocess_set_error(index, "[process] runtime error:", err ? err : "(unknown)");
+                kprocess_set_error(index, "process runtime error:", err ? err : "(unknown)");
+                kprocess_print_lua_traceback(entry->thread);
                 lua_pop(entry->thread, 1);
                 kprocess_release_slot(index);
             }

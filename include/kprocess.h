@@ -16,6 +16,7 @@ typedef enum {
 
 int kprocess_init(lua_State* main_lua);
 int kprocess_create(const char* script);
+int kprocess_create_function(lua_State* owner, int func_index);
 int kprocess_kill(unsigned int pid);
 unsigned int kprocess_current_pid(lua_State* L);
 unsigned int kprocess_count(void);
