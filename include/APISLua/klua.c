@@ -9,6 +9,7 @@
 #include "kprocesslua.h"
 #include "ksyslua.h"
 #include "ksynclua.h"
+#include "kdebuglua.h"
 #include "serial.h"
 #include "vga.h"
 
@@ -535,6 +536,10 @@ int klua_init(void) {
     }
 
     if (!keventlua_register(g_lua)) {
+        return 0;
+    }
+
+    if (!kdebuglua_register(g_lua)) {
         return 0;
     }
 
