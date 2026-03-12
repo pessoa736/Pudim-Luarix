@@ -190,28 +190,28 @@ process.setuid(uid)         -- mudar user
 fs.chmod(file, mode)        -- permissões
 process.get_capabilities()  -- capabilities
 ```
-- [ ] User/Group system primitivo
-- [ ] File permissions (rwx para user/group/other)
-- [ ] Capabilities-based security
+- [x] User/Group system primitivo
+- [x] File permissions (rwx para user/group/other)
+- [x] Capabilities-based security
 - **Impacto**: Multi-user seguro
 - **Esforço**: Médio-Alto | **Importância**: 6/10
 
 ### 3.4 **Lua Debugging/REPL Melhorado**
-- [ ] Debugger built-in (breakpoints, step, watch)
-- [ ] REPL com history
-- [ ] Profiler de performance
-- [ ] Memory inspector
+- [x] Debugger built-in (breakpoints, step, watch)
+- [x] REPL com history
+- [x] Profiler de performance
+- [x] Memory inspector
 - **Impacto**: Development experience muito melhor
 - **Esforço**: Médio | **Importância**: 5/10
 
 ### 3.5 **Boot Checkup Completo**
-- [ ] Verificação de integridade do heap (blocos, fragmentação)
-- [ ] Verificação de IDT (handlers registrados para exceções críticas)
-- [ ] Verificação de disco/ATA (leitura de teste, status do storage)
-- [ ] Verificação de Lua VM (estado válido, APIs registradas)
-- [ ] Verificação de filesystem (contagem de arquivos, consistência)
-- [ ] Verificação de timer/PIT (ticks incrementando)
-- [ ] Relatório de checkup com status pass/fail antes de abrir terminal
+- [x] Verificação de integridade do heap (blocos, fragmentação)
+- [x] Verificação de IDT (handlers registrados para exceções críticas)
+- [x] Verificação de disco/ATA (leitura de teste, status do storage)
+- [x] Verificação de Lua VM (estado válido, APIs registradas)
+- [x] Verificação de filesystem (contagem de arquivos, consistência)
+- [x] Verificação de timer/PIT (ticks incrementando)
+- [x] Relatório de checkup com status pass/fail antes de abrir terminal
 - **Impacto**: Detecção de problemas no boot antes de expor o terminal
 - **Esforço**: Médio | **Importância**: 7/10
 

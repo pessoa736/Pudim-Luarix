@@ -56,4 +56,4 @@ essa é minha primeira vez tentando fazer um kernel, e acho que preciso
 estudar mais antes de começa a de fato fazer tudo a mão.
 
 então cheguei a decisão que vou continuar mexendo nesse repor a ter
-cansar dele. provavelmente tentarei fazer do zero no futuro (a mão)
+cansar dele. provavelmente tentarei fazer do zero no futuro (a mão).

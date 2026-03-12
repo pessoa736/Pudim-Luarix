@@ -6,6 +6,7 @@ applyTo: "kernel.c,include/**,drives/**,lua/**,ROADMAP.md"
 # Lua-First Kernel Conventions
 
 - Treat Lua as the primary system interface.
+- For new features, there should be an analogy with pudding, lua, and Linux.
 - Prefer exposing kernel capabilities as Lua tables/functions instead of syscall-style interfaces.
 - Keep performance-critical logic in C, but expose controlled bindings to Lua.
 - Preserve the project direction: kernel services support Lua APIs (process, memory, fs, sync, sys).
