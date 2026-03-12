@@ -2,6 +2,9 @@
 #include "kheap.h"
 #include "kio.h"
 #include "kfslua.h"
+#include "keventlua.h"
+#include "kformatlua.h"
+#include "kkeyboardlua.h"
 #include "kmemorylua.h"
 #include "kprocesslua.h"
 #include "ksyslua.h"
@@ -12,6 +15,13 @@
 #include "../lua/src/lua.h"
 
 static lua_State* g_lua = NULL;
+
+lua_State* klua_state(void) {
+    return g_lua;
+}
+
+#define KLUA_CALL_MAX_ARGS 8u
+#define KLUA_CALL_MAX_ARG_LEN 96u
 
 static void klua_copy_string(char* dst, unsigned int dst_size, const char* src) {
     unsigned int i = 0;
@@ -49,64 +59,124 @@ static void* klua_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
     return krealloc(ptr, nsize);
 }
 
+static void klua_integer_to_string(lua_Integer value, char* buf, unsigned int bufsize);
+
 static int klua_panic(lua_State* L) {
     const char* msg = lua_tostring(L, -1);
 
     vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
     vga_print("[lua panic] ");
+    serial_print("[lua panic] ");
 
     if (msg) {
         vga_print(msg);
+        serial_print(msg);
+    } else {
+        vga_print("(no message)");
+        serial_print("(no message)");
     }
 
     vga_print("\n");
+    serial_print("\r\n");
+
+    /* Print Lua stack traceback */
+    {
+        lua_Debug ar;
+        int level;
+
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        vga_print("  Lua traceback:\n");
+        serial_print("  Lua traceback:\r\n");
+
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+        for (level = 0; level < 16; level++) {
+            if (!lua_getstack(L, level, &ar)) {
+                break;
+            }
+
+            lua_getinfo(L, "Snl", &ar);
+
+            vga_print("    ");
+            serial_print("    ");
+
+            if (ar.source && ar.source[0]) {
+                vga_print(ar.source);
+                serial_print(ar.source);
+            }
+
+            if (ar.currentline > 0) {
+                char linebuf[16];
+                klua_integer_to_string((lua_Integer)ar.currentline, linebuf, sizeof(linebuf));
+                vga_print(":");
+                vga_print(linebuf);
+                serial_print(":");
+                serial_print(linebuf);
+            }
+
+            vga_print(": ");
+            serial_print(": ");
+
+            if (ar.name && ar.name[0]) {
+                vga_print("in '");
+                vga_print(ar.name);
+                vga_print("'");
+                serial_print("in '");
+                serial_print(ar.name);
+                serial_print("'");
+            } else if (ar.what && ar.what[0]) {
+                vga_print("in ");
+                vga_print(ar.what);
+                serial_print("in ");
+                serial_print(ar.what);
+            }
+
+            vga_print("\n");
+            serial_print("\r\n");
+        }
+    }
 
     while (1) {
         asm volatile ("hlt");
     }
 }
 
-/* Helper to convert number to string */
-static void klua_number_to_string(lua_Number num, char* buf, int bufsize) {
-    if (bufsize < 2) return;
-    
-    int pos = 0;
-    int is_negative = 0;
-    
-    /* Handle negative */
-    if (num < 0) {
-        is_negative = 1;
-        num = -num;
+static void klua_integer_to_string(lua_Integer value, char* buf, unsigned int bufsize) {
+    lua_Unsigned magnitude;
+    char tmp[32];
+    unsigned int n = 0;
+    unsigned int p = 0;
+
+    if (!buf || bufsize < 2) {
+        return;
     }
-    
-    /* Check if integer */
-    lua_Integer ival = (lua_Integer)num;
-    if (num == ival && ival >= 0) {
-        /* Integer conversion */
-        if (is_negative && pos < bufsize - 1) {
-            buf[pos++] = '-';
-        }
-        
-        if (ival == 0) {
-            if (pos < bufsize - 1) buf[pos++] = '0';
-        } else {
-            char temp[32];
-            int tpos = 0;
-            lua_Integer tmp = ival;
-            while (tmp > 0 && tpos < 30) {
-                temp[tpos++] = '0' + (tmp % 10);
-                tmp /= 10;
-            }
-            for (int j = tpos - 1; j >= 0 && pos < bufsize - 1; j--) {
-                buf[pos++] = temp[j];
-            }
-        }
+
+    if (value < 0) {
+        magnitude = (lua_Unsigned)(-(value + 1)) + 1u;
     } else {
-        /* Fallback for floats or out-of-range */
-        if (pos < bufsize - 1) buf[pos++] = '?';
+        magnitude = (lua_Unsigned)value;
     }
-    
-    buf[pos] = 0;
+
+    if (value < 0 && p + 1 < bufsize) {
+        buf[p++] = '-';
+    }
+
+    if (magnitude == 0) {
+        buf[p++] = '0';
+        buf[p] = 0;
+        return;
+    }
+
+    while (magnitude > 0 && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (magnitude % 10u));
+        magnitude /= 10u;
+    }
+
+    while (n > 0 && p + 1 < bufsize) {
+        buf[p++] = tmp[--n];
+    }
+
+    buf[p] = 0;
 }
 
 static void klua_write_value(lua_State* L, int idx) {
@@ -118,9 +188,13 @@ static void klua_write_value(lua_State* L, int idx) {
             kio_write(str);
         }
     } else if (type == LUA_TNUMBER) {
-        lua_Number num = lua_tonumber(L, idx);
         char buf[64];
-        klua_number_to_string(num, buf, sizeof(buf));
+        if (lua_isinteger(L, idx)) {
+            klua_integer_to_string(lua_tointeger(L, idx), buf, sizeof(buf));
+        } else if (lua_numbertocstring(L, idx, buf) == 0) {
+            buf[0] = '?';
+            buf[1] = 0;
+        }
         kio_write(buf);
     } else if (type == LUA_TBOOLEAN) {
         kio_write(lua_toboolean(L, idx) ? "true" : "false");
@@ -203,6 +277,174 @@ static int klua_serial_writeln(lua_State* L) {
     return 0;
 }
 
+/* --- Lua base library functions (no lbaselib.c) --- */
+
+static int klua_tonumber(lua_State* L) {
+    if (lua_type(L, 1) == LUA_TNUMBER) {
+        lua_settop(L, 1);
+        return 1;
+    }
+
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        if (lua_stringtonumber(L, lua_tostring(L, 1))) {
+            return 1;
+        }
+    }
+
+    lua_pushnil(L);
+    return 1;
+}
+
+static int klua_tostring(lua_State* L) {
+    int type = lua_type(L, 1);
+
+    if (type == LUA_TSTRING) {
+        lua_settop(L, 1);
+        return 1;
+    }
+
+    if (type == LUA_TNUMBER) {
+        lua_pushstring(L, lua_tostring(L, 1));
+        return 1;
+    }
+
+    if (type == LUA_TBOOLEAN) {
+        lua_pushstring(L, lua_toboolean(L, 1) ? "true" : "false");
+        return 1;
+    }
+
+    if (type == LUA_TNIL) {
+        lua_pushstring(L, "nil");
+        return 1;
+    }
+
+    lua_pushstring(L, lua_typename(L, type));
+    return 1;
+}
+
+static int klua_type(lua_State* L) {
+    lua_pushstring(L, lua_typename(L, lua_type(L, 1)));
+    return 1;
+}
+
+static int klua_next(lua_State* L) {
+    lua_settop(L, 2);
+    if (lua_next(L, 1)) {
+        return 2;
+    }
+
+    lua_pushnil(L);
+    return 1;
+}
+
+static int klua_pairs_iter(lua_State* L) {
+    lua_settop(L, 2);
+    if (lua_next(L, 1)) {
+        return 2;
+    }
+
+    lua_pushnil(L);
+    return 1;
+}
+
+static int klua_pairs(lua_State* L) {
+    lua_pushcfunction(L, klua_pairs_iter);
+    lua_pushvalue(L, 1);
+    lua_pushnil(L);
+    return 3;
+}
+
+static int klua_ipairs_iter(lua_State* L) {
+    lua_Integer i = lua_tointeger(L, 2) + 1;
+    lua_pushinteger(L, i);
+    lua_geti(L, 1, i);
+    return lua_isnil(L, -1) ? 0 : 2;
+}
+
+static int klua_ipairs(lua_State* L) {
+    lua_pushcfunction(L, klua_ipairs_iter);
+    lua_pushvalue(L, 1);
+    lua_pushinteger(L, 0);
+    return 3;
+}
+
+static int klua_select(lua_State* L) {
+    int n = lua_gettop(L);
+
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        const char* s = lua_tostring(L, 1);
+        if (s && s[0] == '#') {
+            lua_pushinteger(L, n - 1);
+            return 1;
+        }
+    }
+
+    if (lua_isinteger(L, 1)) {
+        lua_Integer idx = lua_tointeger(L, 1);
+        if (idx < 0) {
+            idx = n + idx;
+        }
+
+        if (idx < 1 || idx >= n) {
+            return 0;
+        }
+
+        return n - (int)idx;
+    }
+
+    return 0;
+}
+
+static int klua_error(lua_State* L) {
+    return lua_error(L);
+}
+
+static int klua_pcall(lua_State* L) {
+    int nargs = lua_gettop(L) - 1;
+    int status;
+
+    if (nargs < 0) {
+        nargs = 0;
+    }
+
+    status = lua_pcall(L, nargs, LUA_MULTRET, 0);
+    lua_pushboolean(L, status == LUA_OK);
+    lua_insert(L, 1);
+    return lua_gettop(L);
+}
+
+static int klua_rawget(lua_State* L) {
+    lua_settop(L, 2);
+    lua_rawget(L, 1);
+    return 1;
+}
+
+static int klua_rawset(lua_State* L) {
+    lua_settop(L, 3);
+    lua_rawset(L, 1);
+    return 0;
+}
+
+static int klua_rawlen(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)lua_rawlen(L, 1));
+    return 1;
+}
+
+static int klua_setmetatable(lua_State* L) {
+    lua_settop(L, 2);
+    lua_setmetatable(L, 1);
+    lua_settop(L, 1);
+    return 1;
+}
+
+static int klua_getmetatable(lua_State* L) {
+    if (!lua_getmetatable(L, 1)) {
+        lua_pushnil(L);
+    }
+
+    return 1;
+}
+
 int klua_init(void) {
     g_lua = lua_newstate(klua_alloc, NULL, 0x50554449u);
 
@@ -215,6 +457,36 @@ int klua_init(void) {
     /* Register print function */
     lua_pushcfunction(g_lua, klua_print);
     lua_setglobal(g_lua, "print");
+
+    /* Register base library functions */
+    lua_pushcfunction(g_lua, klua_tonumber);
+    lua_setglobal(g_lua, "tonumber");
+    lua_pushcfunction(g_lua, klua_tostring);
+    lua_setglobal(g_lua, "tostring");
+    lua_pushcfunction(g_lua, klua_type);
+    lua_setglobal(g_lua, "type");
+    lua_pushcfunction(g_lua, klua_next);
+    lua_setglobal(g_lua, "next");
+    lua_pushcfunction(g_lua, klua_pairs);
+    lua_setglobal(g_lua, "pairs");
+    lua_pushcfunction(g_lua, klua_ipairs);
+    lua_setglobal(g_lua, "ipairs");
+    lua_pushcfunction(g_lua, klua_select);
+    lua_setglobal(g_lua, "select");
+    lua_pushcfunction(g_lua, klua_error);
+    lua_setglobal(g_lua, "error");
+    lua_pushcfunction(g_lua, klua_pcall);
+    lua_setglobal(g_lua, "pcall");
+    lua_pushcfunction(g_lua, klua_rawget);
+    lua_setglobal(g_lua, "rawget");
+    lua_pushcfunction(g_lua, klua_rawset);
+    lua_setglobal(g_lua, "rawset");
+    lua_pushcfunction(g_lua, klua_rawlen);
+    lua_setglobal(g_lua, "rawlen");
+    lua_pushcfunction(g_lua, klua_setmetatable);
+    lua_setglobal(g_lua, "setmetatable");
+    lua_pushcfunction(g_lua, klua_getmetatable);
+    lua_setglobal(g_lua, "getmetatable");
 
     /* Register io library */
     lua_createtable(g_lua, 0, 3);
@@ -254,6 +526,18 @@ int klua_init(void) {
         return 0;
     }
 
+    if (!kkeyboardlua_register(g_lua)) {
+        return 0;
+    }
+
+    if (!kformatlua_register(g_lua)) {
+        return 0;
+    }
+
+    if (!keventlua_register(g_lua)) {
+        return 0;
+    }
+
     return 1;
 }
 
@@ -278,16 +562,85 @@ static const char* klua_reader(lua_State* L, void* data, size_t* size) {
     return state->code;
 }
 
-int klua_run(const char* code) {
+/* Traceback message handler for lua_pcall */
+static int klua_msgh(lua_State* L) {
+    const char* msg = lua_tostring(L, 1);
+    lua_Debug ar;
+    int level;
+    int first = 1;
+
+    if (msg) {
+        lua_pushstring(L, msg);
+    } else {
+        lua_pushstring(L, "(error object is not a string)");
+    }
+
+    lua_pushstring(L, "\n  traceback:");
+
+    for (level = 1; level < 16; level++) {
+        char linebuf[16];
+
+        if (!lua_getstack(L, level, &ar)) {
+            break;
+        }
+
+        lua_getinfo(L, "Snl", &ar);
+
+        if (first) {
+            first = 0;
+        }
+
+        lua_pushstring(L, "\n    ");
+
+        if (ar.source && ar.source[0]) {
+            lua_pushstring(L, ar.source);
+        } else {
+            lua_pushstring(L, "?");
+        }
+
+        if (ar.currentline > 0) {
+            klua_integer_to_string((lua_Integer)ar.currentline, linebuf, sizeof(linebuf));
+            lua_pushstring(L, ":");
+            lua_pushstring(L, linebuf);
+        }
+
+        lua_pushstring(L, ": ");
+
+        if (ar.name && ar.name[0]) {
+            lua_pushstring(L, "in '");
+            lua_pushstring(L, ar.name);
+            lua_pushstring(L, "'");
+        } else if (ar.what && ar.what[0]) {
+            lua_pushstring(L, "in ");
+            lua_pushstring(L, ar.what);
+        }
+
+        lua_concat(L, lua_gettop(L));
+    }
+
+    lua_concat(L, lua_gettop(L));
+    return 1;
+}
+
+static int klua_run_internal(const char* code, int announce_success) {
+    int base;
+    int msgh_index;
+
     if (!g_lua) {
-        vga_print("[lua] VM not initialized\n");
+        vga_print("lua: VM not initialized\n");
         return 0;
     }
 
     if (!code) {
-        vga_print("[lua] No code to execute\n");
+        vga_print("lua: no code to execute\n");
         return 0;
     }
+
+    base = lua_gettop(g_lua);
+
+    /* Push message handler for traceback on error */
+    lua_pushcfunction(g_lua, klua_msgh);
+    msgh_index = lua_gettop(g_lua);
 
     /* Setup reader state */
     struct klua_reader_state reader_state;
@@ -304,27 +657,44 @@ int klua_run(const char* code) {
     /* Load the chunk */
     int load_result = lua_load(g_lua, klua_reader, &reader_state, "kernel_code", "t");
     if (load_result != LUA_OK) {
-        vga_print("[lua] Load error: ");
+        vga_print("lua load error: ");
         const char* err = lua_tostring(g_lua, -1);
         if (err) vga_print(err);
         vga_print("\n");
-        lua_pop(g_lua, 1);
+        lua_settop(g_lua, base);
         return 0;
     }
 
-    /* Execute the loaded function */
-    int call_result = lua_pcall(g_lua, 0, LUA_MULTRET, 0);
+    /* Execute the loaded function with message handler */
+    int call_result = lua_pcall(g_lua, 0, 0, msgh_index);
     if (call_result != LUA_OK) {
-        vga_print("[lua] Execution error: ");
+        vga_print("lua error: ");
         const char* err = lua_tostring(g_lua, -1);
         if (err) vga_print(err);
         vga_print("\n");
-        lua_pop(g_lua, 1);
+        serial_print("[lua error] ");
+        err = lua_tostring(g_lua, -1);
+        if (err) serial_print(err);
+        serial_print("\r\n");
+        lua_settop(g_lua, base);
         return 0;
     }
 
-    vga_print("[lua] executed OK\n");
+    lua_settop(g_lua, base);
+
+    if (announce_success) {
+        vga_print("lua executed OK\n");
+    }
+
     return 1;
+}
+
+int klua_run(const char* code) {
+    return klua_run_internal(code, 1);
+}
+
+int klua_run_quiet(const char* code) {
+    return klua_run_internal(code, 0);
 }
 
 int klua_get_global_table_string(const char* table_name, const char* key, char* out, unsigned int out_size) {
@@ -354,7 +724,12 @@ int klua_get_global_table_string(const char* table_name, const char* key, char* 
 }
 
 int klua_call_global_table_function(const char* table_name, const char* key) {
+    return klua_call_global_table_function_with_args(table_name, key, 0);
+}
+
+int klua_call_global_table_function_with_args(const char* table_name, const char* key, const char* args_line) {
     int call_result;
+    unsigned int argc = 0;
 
     if (!g_lua || !table_name || !key) {
         return 0;
@@ -372,9 +747,57 @@ int klua_call_global_table_function(const char* table_name, const char* key) {
         return 0;
     }
 
-    call_result = lua_pcall(g_lua, 0, 0, 0);
+    if (args_line && args_line[0]) {
+        unsigned int i = 0;
+
+        while (args_line[i] && argc < KLUA_CALL_MAX_ARGS) {
+            char token[KLUA_CALL_MAX_ARG_LEN];
+            unsigned int tlen = 0;
+            char quote = 0;
+
+            while (args_line[i] == ' ') {
+                i++;
+            }
+
+            if (!args_line[i]) {
+                break;
+            }
+
+            if (args_line[i] == '"' || args_line[i] == '\'') {
+                quote = args_line[i++];
+            }
+
+            while (args_line[i] && tlen + 1 < KLUA_CALL_MAX_ARG_LEN) {
+                if (quote) {
+                    if (args_line[i] == quote) {
+                        i++;
+                        break;
+                    }
+                } else if (args_line[i] == ' ') {
+                    break;
+                }
+
+                token[tlen++] = args_line[i++];
+            }
+
+            token[tlen] = 0;
+
+            if (quote) {
+                while (args_line[i] && args_line[i] != ' ') {
+                    i++;
+                }
+            }
+
+            if (tlen > 0) {
+                lua_pushstring(g_lua, token);
+                argc++;
+            }
+        }
+    }
+
+    call_result = lua_pcall(g_lua, (int)argc, 0, 0);
     if (call_result != LUA_OK) {
-        vga_print("[lua] Command function error: ");
+        vga_print("lua command error: ");
         {
             const char* err = lua_tostring(g_lua, -1);
             if (err) {
