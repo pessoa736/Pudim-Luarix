@@ -23,6 +23,9 @@ typedef struct kfs_file {
     char name[KFS_MAX_NAME];
     char* data;
     size_t size;
+    unsigned int owner_uid;
+    unsigned int owner_gid;
+    unsigned int mode;
 } kfs_file_t;
 
 static kfs_file_t g_kfs_files[KFS_MAX_FILES];
@@ -157,6 +160,9 @@ void kfs_clear(void) {
         g_kfs_files[i].name[0] = 0;
         g_kfs_files[i].data = NULL;
         g_kfs_files[i].size = 0;
+        g_kfs_files[i].owner_uid = 0;
+        g_kfs_files[i].owner_gid = 0;
+        g_kfs_files[i].mode = 0644u;
     }
 
     kfs_unlock();
@@ -208,6 +214,9 @@ int kfs_write(const char* name, const char* content) {
         kfs_strncpy0(g_kfs_files[idx].name, name, sizeof(g_kfs_files[idx].name));
         g_kfs_files[idx].data = NULL;
         g_kfs_files[idx].size = 0;
+        g_kfs_files[idx].owner_uid = 0;
+        g_kfs_files[idx].owner_gid = 0;
+        g_kfs_files[idx].mode = 0644u;
     }
 
     if (g_kfs_files[idx].data) {
@@ -317,6 +326,9 @@ int kfs_delete(const char* name) {
     g_kfs_files[idx].name[0] = 0;
     g_kfs_files[idx].data = NULL;
     g_kfs_files[idx].size = 0;
+    g_kfs_files[idx].owner_uid = 0;
+    g_kfs_files[idx].owner_gid = 0;
+    g_kfs_files[idx].mode = 0644u;
 
     kfs_unlock();
     kfs_persist_save();
@@ -376,6 +388,99 @@ const char* kfs_name_at(size_t index) {
     }
 
     return NULL;
+}
+
+int kfs_chmod(const char* name, unsigned int mode) {
+    int idx;
+
+    if (!kfs_is_valid_name(name)) {
+        return 0;
+    }
+
+    /* Clamp mode to 9-bit range (rwxrwxrwx) */
+    if (mode > 0777u) {
+        return 0;
+    }
+
+    kfs_lock();
+
+    idx = kfs_find_index(name);
+    if (idx < 0) {
+        kfs_unlock();
+        return 0;
+    }
+
+    g_kfs_files[idx].mode = mode;
+
+    kfs_unlock();
+    return 1;
+}
+
+int kfs_chown(const char* name, unsigned int uid, unsigned int gid) {
+    int idx;
+
+    if (!kfs_is_valid_name(name)) {
+        return 0;
+    }
+
+    kfs_lock();
+
+    idx = kfs_find_index(name);
+    if (idx < 0) {
+        kfs_unlock();
+        return 0;
+    }
+
+    g_kfs_files[idx].owner_uid = uid;
+    g_kfs_files[idx].owner_gid = gid;
+
+    kfs_unlock();
+    return 1;
+}
+
+unsigned int kfs_get_mode(const char* name) {
+    int idx;
+
+    if (!kfs_is_valid_name(name)) {
+        return 0;
+    }
+
+    idx = kfs_find_index(name);
+    if (idx < 0) {
+        return 0;
+    }
+
+    return g_kfs_files[idx].mode;
+}
+
+unsigned int kfs_get_owner(const char* name) {
+    int idx;
+
+    if (!kfs_is_valid_name(name)) {
+        return 0;
+    }
+
+    idx = kfs_find_index(name);
+    if (idx < 0) {
+        return 0;
+    }
+
+    return g_kfs_files[idx].owner_uid;
+}
+
+unsigned int kfs_get_group(const char* name) {
+    int idx;
+
+    if (!kfs_is_valid_name(name)) {
+        return 0;
+    }
+
+    idx = kfs_find_index(name);
+    if (idx < 0) {
+        return 0;
+    }
+
+    return g_kfs_files[idx].owner_gid;
 }
 
 /* --- Persistence via ATA secondary disk --- */

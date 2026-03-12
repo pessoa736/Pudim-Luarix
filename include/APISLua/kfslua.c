@@ -1,5 +1,7 @@
 #include "kfslua.h"
 #include "kfs.h"
+#include "kprocess.h"
+#include "ksecurity.h"
 
 static int g_kfs_ready = 0;
 
@@ -193,6 +195,112 @@ static int kfslua_persistent(lua_State* L) {
     return 1;
 }
 
+static int kfslua_chmod(lua_State* L) {
+    const char* name;
+    lua_Integer mode;
+    unsigned int pid;
+    unsigned int caller_uid;
+
+    kfslua_ensure_init();
+
+    name = kfslua_check_string_arg(L, 1);
+    if (!name || lua_gettop(L) < 2 || !lua_isinteger(L, 2)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    mode = lua_tointeger(L, 2);
+    if (mode < 0 || mode > 0777) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (!kfs_exists(name)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    pid = kprocess_current_pid(L);
+    caller_uid = (pid == 0) ? 0 : kprocess_get_uid(pid);
+
+    /* Only root, file owner, or CAP_CHMOD can chmod */
+    if (caller_uid != KSECURITY_ROOT_UID &&
+        caller_uid != kfs_get_owner(name) &&
+        !ksecurity_check_capability(caller_uid, KSECURITY_CAP_CHMOD)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, kfs_chmod(name, (unsigned int)mode));
+    return 1;
+}
+
+static int kfslua_chown(lua_State* L) {
+    const char* name;
+    lua_Integer uid;
+    lua_Integer gid;
+    unsigned int pid;
+    unsigned int caller_uid;
+
+    kfslua_ensure_init();
+
+    name = kfslua_check_string_arg(L, 1);
+    if (!name || lua_gettop(L) < 3 || !lua_isinteger(L, 2) || !lua_isinteger(L, 3)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    uid = lua_tointeger(L, 2);
+    gid = lua_tointeger(L, 3);
+    if (uid < 0 || gid < 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (!kfs_exists(name)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    pid = kprocess_current_pid(L);
+    caller_uid = (pid == 0) ? 0 : kprocess_get_uid(pid);
+
+    /* Only root or CAP_CHOWN can chown */
+    if (caller_uid != KSECURITY_ROOT_UID &&
+        !ksecurity_check_capability(caller_uid, KSECURITY_CAP_CHOWN)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, kfs_chown(name, (unsigned int)uid, (unsigned int)gid));
+    return 1;
+}
+
+static int kfslua_getperm(lua_State* L) {
+    const char* name;
+
+    kfslua_ensure_init();
+
+    name = kfslua_check_string_arg(L, 1);
+    if (!name || !kfs_exists(name)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_createtable(L, 0, 3);
+
+    lua_pushinteger(L, (lua_Integer)kfs_get_mode(name));
+    lua_setfield(L, -2, "mode");
+
+    lua_pushinteger(L, (lua_Integer)kfs_get_owner(name));
+    lua_setfield(L, -2, "uid");
+
+    lua_pushinteger(L, (lua_Integer)kfs_get_group(name));
+    lua_setfield(L, -2, "gid");
+
+    return 1;
+}
+
 int kfslua_register(lua_State* L) {
     if (!L) {
         return 0;
@@ -200,7 +308,7 @@ int kfslua_register(lua_State* L) {
 
     kfslua_ensure_init();
 
-    lua_createtable(L, 0, 12);
+    lua_createtable(L, 0, 15);
 
     lua_pushcfunction(L, kfslua_write);
     lua_setfield(L, -2, "write");
@@ -237,6 +345,15 @@ int kfslua_register(lua_State* L) {
 
     lua_pushcfunction(L, kfslua_persistent);
     lua_setfield(L, -2, "persistent");
+
+    lua_pushcfunction(L, kfslua_chmod);
+    lua_setfield(L, -2, "chmod");
+
+    lua_pushcfunction(L, kfslua_chown);
+    lua_setfield(L, -2, "chown");
+
+    lua_pushcfunction(L, kfslua_getperm);
+    lua_setfield(L, -2, "getperm");
 
     lua_pushvalue(L, -1);
     lua_setglobal(L, "fs");
