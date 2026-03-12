@@ -91,7 +91,7 @@ static void kterm_u64_to_str(size_t value, char* out, size_t out_cap) {
 }
 
 static void kterm_print_prompt(void) {
-    kio_write("plterm> ");
+    kio_write("\033[32mplterm>\033[0m ");
 }
 
 static void kterm_print_help(void) {
