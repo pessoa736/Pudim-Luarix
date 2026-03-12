@@ -11,7 +11,12 @@
 #include "ksynclua.h"
 #include "kdebuglua.h"
 #include "serial.h"
+#include "kdisplay.h"
+#include "arch.h"
+
+#if ARCH_HAS_VGA
 #include "vga.h"
+#endif
 
 #include "../lua/src/lua.h"
 
@@ -65,31 +70,51 @@ static void klua_integer_to_string(lua_Integer value, char* buf, unsigned int bu
 static int klua_panic(lua_State* L) {
     const char* msg = lua_tostring(L, -1);
 
-    vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-    vga_print("[lua panic] ");
-    serial_print("[lua panic] ");
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+    }
+#endif
+
+    kdisplay_write("[lua panic] ");
 
     if (msg) {
-        vga_print(msg);
-        serial_print(msg);
+        kdisplay_write(msg);
     } else {
-        vga_print("(no message)");
-        serial_print("(no message)");
+        kdisplay_write("(no message)");
     }
 
-    vga_print("\n");
-    serial_print("\r\n");
+    kdisplay_write("\n");
+
+    /* Mirror to serial when VGA is primary */
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        serial_print("[lua panic] ");
+        serial_print(msg ? msg : "(no message)");
+        serial_print("\r\n");
+    }
 
     /* Print Lua stack traceback */
     {
         lua_Debug ar;
         int level;
 
-        vga_set_color(VGA_YELLOW, VGA_BLACK);
-        vga_print("  Lua traceback:\n");
-        serial_print("  Lua traceback:\r\n");
+#if ARCH_HAS_VGA
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            vga_set_color(VGA_YELLOW, VGA_BLACK);
+        }
+#endif
 
-        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        kdisplay_write("  Lua traceback:\n");
+
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            serial_print("  Lua traceback:\r\n");
+        }
+
+#if ARCH_HAS_VGA
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+#endif
 
         for (level = 0; level < 16; level++) {
             if (!lua_getstack(L, level, &ar)) {
@@ -98,47 +123,64 @@ static int klua_panic(lua_State* L) {
 
             lua_getinfo(L, "Snl", &ar);
 
-            vga_print("    ");
-            serial_print("    ");
+            kdisplay_write("    ");
+
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print("    ");
+            }
 
             if (ar.source && ar.source[0]) {
-                vga_print(ar.source);
-                serial_print(ar.source);
+                kdisplay_write(ar.source);
+                if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                    serial_print(ar.source);
+                }
             }
 
             if (ar.currentline > 0) {
                 char linebuf[16];
                 klua_integer_to_string((lua_Integer)ar.currentline, linebuf, sizeof(linebuf));
-                vga_print(":");
-                vga_print(linebuf);
-                serial_print(":");
-                serial_print(linebuf);
+                kdisplay_write(":");
+                kdisplay_write(linebuf);
+                if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                    serial_print(":");
+                    serial_print(linebuf);
+                }
             }
 
-            vga_print(": ");
-            serial_print(": ");
+            kdisplay_write(": ");
+
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print(": ");
+            }
 
             if (ar.name && ar.name[0]) {
-                vga_print("in '");
-                vga_print(ar.name);
-                vga_print("'");
-                serial_print("in '");
-                serial_print(ar.name);
-                serial_print("'");
+                kdisplay_write("in '");
+                kdisplay_write(ar.name);
+                kdisplay_write("'");
+                if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                    serial_print("in '");
+                    serial_print(ar.name);
+                    serial_print("'");
+                }
             } else if (ar.what && ar.what[0]) {
-                vga_print("in ");
-                vga_print(ar.what);
-                serial_print("in ");
-                serial_print(ar.what);
+                kdisplay_write("in ");
+                kdisplay_write(ar.what);
+                if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                    serial_print("in ");
+                    serial_print(ar.what);
+                }
             }
 
-            vga_print("\n");
-            serial_print("\r\n");
+            kdisplay_write("\n");
+
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print("\r\n");
+            }
         }
     }
 
     while (1) {
-        asm volatile ("hlt");
+        arch_halt();
     }
 }
 
@@ -632,12 +674,12 @@ static int klua_run_internal(const char* code, int announce_success) {
     int msgh_index;
 
     if (!g_lua) {
-        vga_print("lua: VM not initialized\n");
+        kdisplay_write("lua: VM not initialized\n");
         return 0;
     }
 
     if (!code) {
-        vga_print("lua: no code to execute\n");
+        kdisplay_write("lua: no code to execute\n");
         return 0;
     }
 
@@ -662,10 +704,10 @@ static int klua_run_internal(const char* code, int announce_success) {
     /* Load the chunk */
     int load_result = lua_load(g_lua, klua_reader, &reader_state, "kernel_code", "t");
     if (load_result != LUA_OK) {
-        vga_print("lua load error: ");
+        kdisplay_write("lua load error: ");
         const char* err = lua_tostring(g_lua, -1);
-        if (err) vga_print(err);
-        vga_print("\n");
+        if (err) kdisplay_write(err);
+        kdisplay_write("\n");
         lua_settop(g_lua, base);
         return 0;
     }
@@ -673,14 +715,16 @@ static int klua_run_internal(const char* code, int announce_success) {
     /* Execute the loaded function with message handler */
     int call_result = lua_pcall(g_lua, 0, 0, msgh_index);
     if (call_result != LUA_OK) {
-        vga_print("lua error: ");
+        kdisplay_write("lua error: ");
         const char* err = lua_tostring(g_lua, -1);
-        if (err) vga_print(err);
-        vga_print("\n");
-        serial_print("[lua error] ");
-        err = lua_tostring(g_lua, -1);
-        if (err) serial_print(err);
-        serial_print("\r\n");
+        if (err) kdisplay_write(err);
+        kdisplay_write("\n");
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            serial_print("[lua error] ");
+            err = lua_tostring(g_lua, -1);
+            if (err) serial_print(err);
+            serial_print("\r\n");
+        }
         lua_settop(g_lua, base);
         return 0;
     }
@@ -688,7 +732,7 @@ static int klua_run_internal(const char* code, int announce_success) {
     lua_settop(g_lua, base);
 
     if (announce_success) {
-        vga_print("lua executed OK\n");
+        kdisplay_write("lua executed OK\n");
     }
 
     return 1;
@@ -802,14 +846,14 @@ int klua_call_global_table_function_with_args(const char* table_name, const char
 
     call_result = lua_pcall(g_lua, (int)argc, 0, 0);
     if (call_result != LUA_OK) {
-        vga_print("lua command error: ");
+        kdisplay_write("lua command error: ");
         {
             const char* err = lua_tostring(g_lua, -1);
             if (err) {
-                vga_print(err);
+                kdisplay_write(err);
             }
         }
-        vga_print("\n");
+        kdisplay_write("\n");
         lua_pop(g_lua, 2);
         return 0;
     }

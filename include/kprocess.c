@@ -1,7 +1,12 @@
 #include "kprocess.h"
 #include "kheap.h"
-#include "vga.h"
 #include "serial.h"
+#include "arch.h"
+#include "kdisplay.h"
+
+#if ARCH_HAS_VGA
+#include "vga.h"
+#endif
 
 #define KPROCESS_THREAD_TABLE "__kproc_threads"
 #define KPROCESS_PT_ENTRIES 512u
@@ -46,13 +51,21 @@ static uint64_t g_kprocess_pdpt_pool[KPROCESS_MAX_PROCESSES][KPROCESS_PT_ENTRIES
 static uint64_t g_kprocess_pd_pool[KPROCESS_MAX_PROCESSES][KPROCESS_PT_ENTRIES] __attribute__((aligned(4096)));
 
 static inline uint64_t kprocess_read_cr3(void) {
+#ifdef ARCH_X86_64
     uint64_t value;
     asm volatile("mov %%cr3, %0" : "=r"(value));
     return value;
+#else
+    return 0;
+#endif
 }
 
 static inline void kprocess_write_cr3(uint64_t value) {
+#ifdef ARCH_X86_64
     asm volatile("mov %0, %%cr3" : : "r"(value) : "memory");
+#else
+    (void)value;
+#endif
 }
 
 static void kprocess_copy_page_table(uint64_t* dst, const uint64_t* src) {
@@ -312,11 +325,22 @@ static void kprocess_print_lua_traceback(lua_State* L) {
     lua_Debug ar;
     int level;
 
-    vga_set_color(VGA_YELLOW, VGA_BLACK);
-    vga_print("  traceback:\n");
-    serial_print("  traceback:\r\n");
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+    }
+#endif
 
-    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    kdisplay_write("  traceback:\n");
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        serial_print("  traceback:\r\n");
+    }
+
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+#endif
 
     for (level = 0; level < 16; level++) {
         if (!lua_getstack(L, level, &ar)) {
@@ -325,42 +349,56 @@ static void kprocess_print_lua_traceback(lua_State* L) {
 
         lua_getinfo(L, "Snl", &ar);
 
-        vga_print("    ");
-        serial_print("    ");
+        kdisplay_write("    ");
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            serial_print("    ");
+        }
 
         if (ar.source && ar.source[0]) {
-            vga_print(ar.source);
-            serial_print(ar.source);
+            kdisplay_write(ar.source);
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print(ar.source);
+            }
         }
 
         if (ar.currentline > 0) {
             char linebuf[16];
             kprocess_u32_to_str((unsigned int)ar.currentline, linebuf, sizeof(linebuf));
-            vga_print(":");
-            vga_print(linebuf);
-            serial_print(":");
-            serial_print(linebuf);
+            kdisplay_write(":");
+            kdisplay_write(linebuf);
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print(":");
+                serial_print(linebuf);
+            }
         }
 
-        vga_print(": ");
-        serial_print(": ");
+        kdisplay_write(": ");
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            serial_print(": ");
+        }
 
         if (ar.name && ar.name[0]) {
-            vga_print("in '");
-            vga_print(ar.name);
-            vga_print("'");
-            serial_print("in '");
-            serial_print(ar.name);
-            serial_print("'");
+            kdisplay_write("in '");
+            kdisplay_write(ar.name);
+            kdisplay_write("'");
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print("in '");
+                serial_print(ar.name);
+                serial_print("'");
+            }
         } else if (ar.what && ar.what[0]) {
-            vga_print("in ");
-            vga_print(ar.what);
-            serial_print("in ");
-            serial_print(ar.what);
+            kdisplay_write("in ");
+            kdisplay_write(ar.what);
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print("in ");
+                serial_print(ar.what);
+            }
         }
 
-        vga_print("\n");
-        serial_print("\r\n");
+        kdisplay_write("\n");
+        if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+            serial_print("\r\n");
+        }
     }
 }
 
@@ -390,10 +428,12 @@ static void kprocess_set_error(unsigned int index, const char* prefix, const cha
         line[i] = 0;
     }
 
-    vga_print(line);
-    vga_print("\n");
-    serial_print(line);
-    serial_print("\r\n");
+    kdisplay_write(line);
+    kdisplay_write("\n");
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        serial_print(line);
+        serial_print("\r\n");
+    }
     g_kprocess_entries[index].state = KPROCESS_STATE_ERROR;
 }
 
@@ -468,9 +508,14 @@ int kprocess_create(const char* script) {
     if (load_rc != LUA_OK) {
         const char* err = lua_tostring(thread, -1);
         if (err) {
-            vga_print("process load error: ");
-            vga_print(err);
-            vga_print("\n");
+            kdisplay_write("process load error: ");
+            kdisplay_write(err);
+            kdisplay_write("\n");
+            if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+                serial_print("process load error: ");
+                serial_print(err);
+                serial_print("\r\n");
+            }
         }
 
         lua_pop(thread, 1);

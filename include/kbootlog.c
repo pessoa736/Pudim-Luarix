@@ -2,7 +2,12 @@
 #include "kio.h"
 #include "kfs.h"
 #include "serial.h"
+#include "kdisplay.h"
+#include "arch.h"
+
+#if ARCH_HAS_VGA
 #include "vga.h"
+#endif
 
 static int g_bootlog_file_enabled = 0;
 
@@ -16,15 +21,28 @@ void kbootlog_title(const char* title) {
         return;
     }
 
-    vga_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        vga_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
+    }
+#endif
+
     kio_write("[");
     kio_write(title);
     kio_write("] ");
-    vga_set_color(VGA_WHITE, VGA_BLACK);
 
-    serial_print("[");
-    serial_print(title);
-    serial_print("] ");
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+    }
+#endif
+
+    /* Mirror to serial only when VGA is primary */
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        serial_print("[");
+        serial_print(title);
+        serial_print("] ");
+    }
 
     if (g_bootlog_file_enabled) {
         kfs_append("boot.log", "[");
@@ -39,7 +57,11 @@ void kbootlog_write(const char* msg) {
     }
 
     kio_write(msg);
-    serial_print(msg);
+
+    /* Mirror to serial only when VGA is primary (avoid double print) */
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        serial_print(msg);
+    }
 
     if (g_bootlog_file_enabled) {
         kfs_append("boot.log", msg);
@@ -52,7 +74,10 @@ void kbootlog_writeln(const char* msg) {
     }
 
     kio_write("\n");
-    serial_print("\r\n");
+
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        serial_print("\r\n");
+    }
 
     if (g_bootlog_file_enabled) {
         kfs_append("boot.log", "\n");

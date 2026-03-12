@@ -1,22 +1,22 @@
 #include "kio.h"
-#include "vga.h"
+#include "kdisplay.h"
 
 void kio_write(const char* s) {
     if (!s) {
         return;
     }
 
-    vga_print(s);
+    kdisplay_write(s);
 }
 
 void kio_writeln(const char* s) {
     if (s) {
-        vga_print(s);
+        kdisplay_write(s);
     }
 
-    vga_print("\n");
+    kdisplay_write("\n");
 }
 
 void kio_clear(void) {
-    vga_clear();
+    kdisplay_clear();
 }
