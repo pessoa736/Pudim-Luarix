@@ -110,5 +110,35 @@ run: $(BUILD)/kernel.img $(STORAGE)
 $(STORAGE):
 	dd if=/dev/zero of=$@ bs=1 count=0 seek=$(STORAGE_SIZE) 2>/dev/null
 
+# --- Unit tests (host-compiled) ---
+TEST_CC = gcc
+TEST_CFLAGS = -Wall -Wextra -g -O0 -m64 -Iinclude
+TEST_DIR = tests
+TEST_BUILD = $(BUILD)/tests
+TEST_SRCS = $(wildcard $(TEST_DIR)/test_*.c)
+TEST_BINS = $(patsubst $(TEST_DIR)/test_%.c,$(TEST_BUILD)/test_%,$(TEST_SRCS))
+
+$(TEST_BUILD):
+	mkdir -p $@
+
+$(TEST_BUILD)/test_%: $(TEST_DIR)/test_%.c $(wildcard $(TEST_DIR)/*.h) | $(TEST_BUILD)
+	$(TEST_CC) $(TEST_CFLAGS) $< -o $@ -lm
+
+test: $(TEST_BINS)
+	@passed=0; failed=0; total=0; \
+	for t in $(TEST_BINS); do \
+		total=$$((total + 1)); \
+		name=$$(basename $$t); \
+		echo ""; echo ">>> Running $$name..."; \
+		if $$t; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			echo "!!! $$name FAILED"; \
+		fi; \
+	done; \
+	echo ""; echo "=== Test Summary: $$passed/$$total passed, $$failed failed ==="; \
+	[ $$failed -eq 0 ]
+
 clean:
 	rm -rf $(BUILD)
