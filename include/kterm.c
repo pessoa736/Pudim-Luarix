@@ -12,7 +12,12 @@
 #include "kdebug.h"
 #include "kheap.h"
 #include "serial.h"
+#include "kdisplay.h"
+#include "arch.h"
+
+#if ARCH_HAS_VGA
 #include "vga.h"
+#endif
 
 #define KTERM_BUF_SIZE 256
 #define KTERM_MAX_CMD_LEN 250
@@ -779,19 +784,42 @@ static void kterm_set_line(char* line, size_t* len, size_t* cur,
     }
     line[new_len] = 0;
 
-    /* Clear old chars that extend beyond new length */
-    for (i = new_len; i < old_len; i++) {
-        vga_put_at(start_cursor + (uint16_t)i, ' ');
-    }
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        /* Clear old chars that extend beyond new length */
+        for (i = new_len; i < old_len; i++) {
+            vga_put_at(start_cursor + (uint16_t)i, ' ');
+        }
 
-    /* Draw new content */
-    for (i = 0; i < new_len; i++) {
-        vga_put_at(start_cursor + (uint16_t)i, line[i]);
+        /* Draw new content */
+        for (i = 0; i < new_len; i++) {
+            vga_put_at(start_cursor + (uint16_t)i, line[i]);
+        }
+
+        *len = new_len;
+        *cur = new_len;
+        vga_set_cursor(start_cursor + (uint16_t)new_len);
+        return;
+    }
+#endif
+
+    (void)start_cursor;
+
+    /* Serial mode: move cursor to start of input, clear line, rewrite */
+    serial_print("\r");
+    kterm_print_prompt();
+    serial_print(line);
+
+    /* Erase any leftover characters from old line */
+    for (i = new_len; i < old_len; i++) {
+        serial_putchar(' ');
+    }
+    for (i = new_len; i < old_len; i++) {
+        serial_putchar('\b');
     }
 
     *len = new_len;
     *cur = new_len;
-    vga_set_cursor(start_cursor + (uint16_t)new_len);
 }
 
 void kterm_run(void) {
@@ -801,7 +829,8 @@ void kterm_run(void) {
     size_t cur = 0;
     int keep_running = 1;
     int history_browse = -1; /* -1 = not browsing, >=0 = layer index */
-    uint16_t line_start_cursor;
+    uint16_t line_start_cursor = 0;
+    int serial_mode = (kdisplay_mode() == KDISPLAY_MODE_SERIAL);
 
     history_draft[0] = 0;
 
@@ -810,7 +839,12 @@ void kterm_run(void) {
     serial_print("\r\nserial debug ready (COM1)\r\n");
     kterm_print_help();
     kterm_print_prompt();
-    line_start_cursor = vga_get_cursor();
+
+#if ARCH_HAS_VGA
+    if (!serial_mode) {
+        line_start_cursor = vga_get_cursor();
+    }
+#endif
 
     while (keep_running) {
         unsigned char key = 0;
@@ -818,8 +852,9 @@ void kterm_run(void) {
         kprocess_poll();
         keventlua_dispatch(klua_state());
 
-        /* Handle mouse scroll for scrollback */
-        {
+#if ARCH_HAS_VGA
+        /* Handle mouse scroll for scrollback (VGA only) */
+        if (!serial_mode) {
             int scroll = mouse_get_scroll();
             if (scroll < 0) {
                 vga_scroll_view_up((-scroll) * 3);
@@ -827,15 +862,18 @@ void kterm_run(void) {
                 vga_scroll_view_down(scroll * 3);
             }
         }
+#endif
 
         if (!keyboard_getkey_nonblock(&key)) {
             continue;
         }
 
+#if ARCH_HAS_VGA
         /* Any keypress returns to live view if scrolled back */
-        if (vga_is_scrolled_back()) {
+        if (!serial_mode && vga_is_scrolled_back()) {
             vga_scroll_view_down(9999);
         }
+#endif
 
         /* Push key_pressed event for all keys */
         {
@@ -847,7 +885,14 @@ void kterm_run(void) {
 
         /* Enter */
         if (key == '\r' || key == '\n') {
-            vga_putchar('\n');
+            if (serial_mode) {
+                serial_print("\r\n");
+            }
+#if ARCH_HAS_VGA
+            else {
+                vga_putchar('\n');
+            }
+#endif
             line[len] = 0;
 
             /* Trim trailing whitespace */
@@ -866,7 +911,11 @@ void kterm_run(void) {
             if (keep_running) {
                 kio_write("\n");
                 kterm_print_prompt();
-                line_start_cursor = vga_get_cursor();
+#if ARCH_HAS_VGA
+                if (!serial_mode) {
+                    line_start_cursor = vga_get_cursor();
+                }
+#endif
             }
             continue;
         }
@@ -880,13 +929,29 @@ void kterm_run(void) {
             }
             len--;
 
-            /* Redraw from cursor position */
-            vga_set_cursor(line_start_cursor + (uint16_t)cur);
-            for (i = cur; i < len; i++) {
-                vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+#if ARCH_HAS_VGA
+            if (!serial_mode) {
+                /* Redraw from cursor position */
+                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+                for (i = cur; i < len; i++) {
+                    vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+                }
+                vga_put_at(line_start_cursor + (uint16_t)len, ' ');
+                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+            } else
+#endif
+            {
+                /* Serial: redraw line from cursor */
+                serial_putchar('\b');
+                for (i = cur; i < len; i++) {
+                    serial_putchar(line[i]);
+                }
+                serial_putchar(' ');
+                /* Move cursor back to position */
+                for (i = cur; i <= len; i++) {
+                    serial_putchar('\b');
+                }
             }
-            vga_put_at(line_start_cursor + (uint16_t)len, ' ');
-            vga_set_cursor(line_start_cursor + (uint16_t)cur);
             continue;
         }
 
@@ -894,7 +959,14 @@ void kterm_run(void) {
         if (key == KBD_KEY_LEFT) {
             if (cur > 0) {
                 cur--;
-                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+#if ARCH_HAS_VGA
+                if (!serial_mode) {
+                    vga_set_cursor(line_start_cursor + (uint16_t)cur);
+                } else
+#endif
+                {
+                    serial_print("\033[D");
+                }
             }
             continue;
         }
@@ -903,7 +975,14 @@ void kterm_run(void) {
         if (key == KBD_KEY_RIGHT) {
             if (cur < len) {
                 cur++;
-                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+#if ARCH_HAS_VGA
+                if (!serial_mode) {
+                    vga_set_cursor(line_start_cursor + (uint16_t)cur);
+                } else
+#endif
+                {
+                    serial_print("\033[C");
+                }
             }
             continue;
         }
@@ -954,14 +1033,34 @@ void kterm_run(void) {
         /* Home */
         if (key == KBD_KEY_HOME) {
             cur = 0;
-            vga_set_cursor(line_start_cursor);
+#if ARCH_HAS_VGA
+            if (!serial_mode) {
+                vga_set_cursor(line_start_cursor);
+            } else
+#endif
+            {
+                serial_print("\r");
+                kterm_print_prompt();
+            }
             continue;
         }
 
         /* End */
         if (key == KBD_KEY_END) {
             cur = len;
-            vga_set_cursor(line_start_cursor + (uint16_t)len);
+#if ARCH_HAS_VGA
+            if (!serial_mode) {
+                vga_set_cursor(line_start_cursor + (uint16_t)len);
+            } else
+#endif
+            {
+                size_t i;
+                serial_print("\r");
+                kterm_print_prompt();
+                for (i = 0; i < len; i++) {
+                    serial_putchar(line[i]);
+                }
+            }
             continue;
         }
 
@@ -973,11 +1072,25 @@ void kterm_run(void) {
                     line[i] = line[i + 1];
                 }
                 len--;
-                for (i = cur; i < len; i++) {
-                    vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+#if ARCH_HAS_VGA
+                if (!serial_mode) {
+                    for (i = cur; i < len; i++) {
+                        vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+                    }
+                    vga_put_at(line_start_cursor + (uint16_t)len, ' ');
+                    vga_set_cursor(line_start_cursor + (uint16_t)cur);
+                } else
+#endif
+                {
+                    /* Serial: redraw from cursor, erase trailing */
+                    for (i = cur; i < len; i++) {
+                        serial_putchar(line[i]);
+                    }
+                    serial_putchar(' ');
+                    for (i = cur; i <= len; i++) {
+                        serial_putchar('\b');
+                    }
                 }
-                vga_put_at(line_start_cursor + (uint16_t)len, ' ');
-                vga_set_cursor(line_start_cursor + (uint16_t)cur);
             }
             continue;
         }
@@ -996,7 +1109,11 @@ void kterm_run(void) {
                 len = 0;
                 cur = 0;
                 kterm_print_prompt();
-                line_start_cursor = vga_get_cursor();
+#if ARCH_HAS_VGA
+                if (!serial_mode) {
+                    line_start_cursor = vga_get_cursor();
+                }
+#endif
                 continue;
             }
 
@@ -1008,11 +1125,24 @@ void kterm_run(void) {
             len++;
             cur++;
 
-            /* Redraw from insert position */
-            for (i = cur - 1; i < len; i++) {
-                vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+#if ARCH_HAS_VGA
+            if (!serial_mode) {
+                /* Redraw from insert position */
+                for (i = cur - 1; i < len; i++) {
+                    vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+                }
+                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+            } else
+#endif
+            {
+                /* Serial: print char + redraw rest + reposition */
+                for (i = cur - 1; i < len; i++) {
+                    serial_putchar(line[i]);
+                }
+                for (i = cur; i < len; i++) {
+                    serial_putchar('\b');
+                }
             }
-            vga_set_cursor(line_start_cursor + (uint16_t)cur);
         }
     }
 }
