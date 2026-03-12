@@ -26,5 +26,9 @@ void vga_set_color(uint8_t fg, uint8_t bg);
 void vga_clear(void);
 void vga_putchar(char c);
 void vga_print(const char* s);
+uint16_t vga_get_cursor(void);
+void vga_set_cursor(uint16_t pos);
+void vga_put_at(uint16_t pos, char c);
+char vga_char_at(uint16_t pos);
 
 #endif
