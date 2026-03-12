@@ -12,6 +12,10 @@
 #include "include/serial.h"
 #include "include/kevent.h"
 #include "include/ksys.h"
+#include "include/mouse.h"
+#include "include/ksecurity.h"
+#include "include/kdebug.h"
+#include "include/kcheckup.h"
 
 static void u32_to_str(unsigned int value, char* out, unsigned int out_size) {
     char tmp[16];
@@ -80,8 +84,7 @@ static void heap_self_test(void) {
     void* d;
 
     kbootlog_title("heap");
-    kbootlog_write("init ");
-    heap_init();
+    kbootlog_write("selftest ");
 
     a = kmalloc(64);
     b = kmalloc(128);
@@ -121,14 +124,25 @@ void lau_main() {
     set_idt_entry(&ir14, (uint8_t)0x8E, (uint8_t)14);
     set_idt_entry(&irq0, (uint8_t)0x8E, (uint8_t)32);
     set_idt_entry(&irq4, (uint8_t)0x8E, (uint8_t)36);
+    set_idt_entry(&irq12, (uint8_t)0x8E, (uint8_t)44);
     load_IDT();
     ktimer_init(100);
     serial_init_irq();
+    mouse_init();
     asm volatile("sti");
+
+    heap_init();
+    kbootlog_enable_file();
+
     kbootlog_line("idt", "OK");
 
     heap_self_test();
     ksys_init();
+    ksecurity_init();
+    kbootlog_line("security", "init OK");
+    kdebug_history_init();
+    kdebug_timer_reset();
+    kbootlog_line("debug", "pudding layers ready");
     kevent_init();
     kbootlog_line("event", "init OK");
 
@@ -146,12 +160,23 @@ void lau_main() {
     if (klua_init()) {
         kbootlog_line("lua", "init OK");
         klua_run(
+            "local _print = print; "
+            "local print = function(...)"
+            "   _print(...);"
+            "   local args = {...}; "
+            "   local l = ''; " 
+            "   for idx, v in ipairs(args) do "
+            "       l = l .. tostring(v) .. ' '; "  
+            "   end "
+            "   l = l .. '\\n'; "
+            "   kfs.append('boot.log', l); "
+            "end;"
+            ""
             "print('Hello from Lua!'); "
-            "kfs.write('boot.log', 'kernel started'); "
-            "kfs.append('boot.log', ' | lua ok'); "
+            "print('kernel started'); "
             "print('kfs count:', kfs.count()); "
-            "print('boot.log:', kfs.read('boot.log')); "
             "print('boot.log size:', kfs.size('boot.log')); "
+            "print('boot.log', ' | lua ok'); "
         );
 
         /* Run init.lua from filesystem if present */
@@ -197,8 +222,11 @@ void lau_main() {
         kbootlog_line("boot", "ticks complete");
     }
 
-    boot_countdown_to_terminal();
+    kcheckup_run();
+
     kbootlog_line("main", "entering terminal");
+    boot_countdown_to_terminal();
+    kbootlog_writeln("\nwelcome to Pudim-luarix x86_64\n");
     kterm_run();
 
     kbootlog_line("main", "halt");
