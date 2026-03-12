@@ -5,11 +5,13 @@ extern double_fault_handler
 extern ktimer_irq_handler
 extern page_fault_handler
 extern serial_irq_handler
+extern mouse_irq_handler
 global ir0
 global ir8
 global ir13
 global irq0
 global irq4
+global irq12
 global ir14
 
 ir0:
@@ -170,6 +172,30 @@ irq4:
     push r11
 
     call serial_irq_handler
+
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+    iretq
+
+irq12:
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+
+    call mouse_irq_handler
 
     pop r11
     pop r10
