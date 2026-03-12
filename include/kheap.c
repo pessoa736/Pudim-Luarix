@@ -40,6 +40,32 @@ typedef struct block_header {
 static block_header_t* heap_start = NULL;
 static size_t heap_region_start = 0;
 static size_t heap_region_end = 0;
+static volatile uint32_t g_heap_lock = 0;
+
+static inline void heap_lock(void) {
+    while (1) {
+        uint32_t expected = 0;
+        uint32_t desired = 1;
+        uint32_t oldval;
+
+        asm volatile(
+            "lock cmpxchgl %2, %1"
+            : "=a"(oldval), "+m"(g_heap_lock)
+            : "r"(desired), "0"(expected)
+            : "cc"
+        );
+
+        if (oldval == expected) {
+            return;
+        }
+
+        asm volatile("pause");
+    }
+}
+
+static inline void heap_unlock(void) {
+    g_heap_lock = 0;
+}
 
 
 static size_t align_up(size_t value) {
@@ -53,6 +79,51 @@ static int ptr_in_heap(void* ptr) {
     size_t addr = (size_t)ptr;
 
     return (addr >= heap_region_start) && (addr < heap_region_end);
+}
+
+static int block_header_valid(block_header_t* block) {
+    size_t block_addr;
+    size_t payload_end;
+
+    if (!block) {
+        return 0;
+    }
+
+    if (!ptr_in_heap(block)) {
+        return 0;
+    }
+
+    if (block->magic != BLOCK_MAGIC_FREE && block->magic != BLOCK_MAGIC_ALLOC) {
+        return 0;
+    }
+
+    block_addr = (size_t)block;
+    if (block->size > HEAP_SIZE) {
+        return 0;
+    }
+
+    if (block_addr > heap_region_end - sizeof(block_header_t)) {
+        return 0;
+    }
+
+    if (block->size > (heap_region_end - block_addr - sizeof(block_header_t))) {
+        return 0;
+    }
+
+    payload_end = block_addr + sizeof(block_header_t) + block->size;
+    if (payload_end > heap_region_end) {
+        return 0;
+    }
+
+    if (block->next && !ptr_in_heap(block->next)) {
+        return 0;
+    }
+
+    if (block->prev && !ptr_in_heap(block->prev)) {
+        return 0;
+    }
+
+    return 1;
 }
 
 
@@ -92,8 +163,20 @@ static void split_block(block_header_t* block, size_t size) {
 
     block_header_t* new_block;
 
+    if (!block_header_valid(block)) {
+        return;
+    }
+
+    if (size > block->size || block->size - size < sizeof(block_header_t)) {
+        return;
+    }
+
     new_block = (block_header_t*)
         ((char*)block + sizeof(block_header_t) + size);
+
+    if (!ptr_in_heap(new_block)) {
+        return;
+    }
 
     new_block->size = block->size - size - sizeof(block_header_t);
     new_block->free = 1;
@@ -120,6 +203,9 @@ static block_header_t* find_free_block(size_t size) {
 
     while(current) {
 
+        if (!block_header_valid(current))
+            return NULL;
+
         if(current->free && current->size >= size)
             return current;
 
@@ -144,7 +230,16 @@ static block_header_t* get_block_header(void* ptr) {
  */
 static void merge_blocks(block_header_t* block) {
 
+    if (!block_header_valid(block)) {
+        return;
+    }
+
     if(block->next && block->next->free) {
+
+        if (!block_header_valid(block->next)) {
+            block->next = NULL;
+            return;
+        }
 
         block->size += sizeof(block_header_t)
                      + block->next->size;
@@ -163,6 +258,7 @@ static void merge_blocks(block_header_t* block) {
 void* kmalloc(size_t size) {
 
     block_header_t* block;
+    void* result;
 
     if(size == 0)
         return NULL;
@@ -170,12 +266,16 @@ void* kmalloc(size_t size) {
     if(!heap_start)
         return NULL;
 
+    heap_lock();
+
     size = align_up(size);
 
     block = find_free_block(size);
 
-    if(!block)
+    if(!block) {
+        heap_unlock();
         return NULL;
+    }
 
     /*
      Divide o bloco se ele for maior que o necessário.
@@ -189,7 +289,9 @@ void* kmalloc(size_t size) {
     /*
      Retorna o endereço logo após o header.
      */
-    return (void*)(block + 1);
+    result = (void*)(block + 1);
+    heap_unlock();
+    return result;
 }
 
 
@@ -261,8 +363,13 @@ void kfree(void* ptr) {
     if(!ptr_in_heap(block))
         return;
 
+    if(!block_header_valid(block))
+        return;
+
     if(block->magic != BLOCK_MAGIC_ALLOC)
         return;
+
+    heap_lock();
 
     block->free = 1;
     block->magic = BLOCK_MAGIC_FREE;
@@ -277,6 +384,8 @@ void kfree(void* ptr) {
      */
     if(block->prev && block->prev->free)
         merge_blocks(block->prev);
+
+    heap_unlock();
 }
 size_t kheap_free_bytes(void) {
     if (!heap_start) {
@@ -287,6 +396,9 @@ size_t kheap_free_bytes(void) {
     block_header_t* current = heap_start;
 
     while (current) {
+        if (!block_header_valid(current)) {
+            break;
+        }
         if (current->free) {
             free_bytes += current->size;
         }
@@ -305,6 +417,9 @@ size_t kheap_total_bytes(void) {
     block_header_t* current = heap_start;
 
     while (current) {
+        if (!block_header_valid(current)) {
+            break;
+        }
         total_bytes += current->size;
         current = current->next;
     }
