@@ -1,7 +1,10 @@
 #include "kterm.h"
+#include "kevent.h"
 #include "kio.h"
 #include "kfs.h"
 #include "keyboard.h"
+#include "APISLua/keventlua.h"
+#include "klua.h"
 #include "klua_cmds.h"
 #include "kprocess.h"
 #include "serial.h"
@@ -9,6 +12,7 @@
 
 #define KTERM_BUF_SIZE 256
 #define KTERM_MAX_CMD_LEN 250
+#define KTERM_MAX_LUA_CODE KTERM_MAX_CMD_LEN
 #define KTERM_TIMEOUT_MS 30000
 
 static int kterm_streq(const char* a, const char* b) {
@@ -87,11 +91,11 @@ static void kterm_u64_to_str(size_t value, char* out, size_t out_cap) {
 }
 
 static void kterm_print_prompt(void) {
-    kio_write("kterm> ");
+    kio_write("plterm> ");
 }
 
 static void kterm_print_help(void) {
-    kio_write("commands: help clear ls write read append rm count size lcmds lrun exit\n");
+    kio_write("commands: help clear ls write read append rm count size save ps lcmds lua exit\n");
 }
 
 static void kterm_result(const char* s) {
@@ -100,7 +104,6 @@ static void kterm_result(const char* s) {
     }
 
     kio_write(s);
-    serial_print(s);
 }
 
 static void kterm_cmd_lcmds(void) {
@@ -117,19 +120,6 @@ static void kterm_cmd_lcmds(void) {
             kterm_result(name);
             kterm_result("\r\n");
         }
-    }
-}
-
-static void kterm_cmd_lrun(const char* name) {
-    if (!name || !name[0]) {
-        kio_write("usage: lrun <lua_command_name>\n");
-        return;
-    }
-
-    if (klua_cmd_run(name)) {
-        kterm_result("lua command executed\r\n");
-    } else {
-        kterm_result("lua command not found or failed\r\n");
     }
 }
 
@@ -183,6 +173,51 @@ static char* kterm_skip_cmd(char* line) {
     }
 
     return &line[i];
+}
+
+static char* kterm_prepare_lua_code(char* code) {
+    size_t len;
+
+    if (!code || !code[0]) {
+        return 0;
+    }
+
+    len = kterm_strlen(code);
+    if (len == 0 || len > KTERM_MAX_LUA_CODE) {
+        return 0;
+    }
+
+    if (len >= 2) {
+        char first = code[0];
+        char last = code[len - 1];
+
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            code[len - 1] = 0;
+            code++;
+
+            if (!code[0]) {
+                return 0;
+            }
+        }
+    }
+
+    return code;
+}
+
+static void kterm_cmd_lua(char* args) {
+    char* code = kterm_prepare_lua_code(args);
+
+    if (!code) {
+        kio_write("usage: lua <code>\n");
+        return;
+    }
+
+    if (klua_cmd_run_line(code)) {
+        serial_print("[kterm] lua command executed\r\n");
+        return;
+    }
+
+    klua_run(code);
 }
 
 static void kterm_cmd_write(char* args) {
@@ -265,9 +300,60 @@ static void kterm_exec(char* line, int* keep_running) {
         return;
     }
 
-    if (kterm_starts_with(line, "lrun ")) {
+    if (kterm_streq(line, "save")) {
+        if (kfs_persist_available()) {
+            if (kfs_persist_save()) {
+                kterm_result("saved to disk\r\n");
+            } else {
+                kterm_result("save failed\r\n");
+            }
+        } else {
+            kterm_result("no storage disk\r\n");
+        }
+        return;
+    }
+
+    if (kterm_streq(line, "ps")) {
+        unsigned int proc_count = kprocess_count();
+        if (proc_count == 0) {
+            kterm_result("(no processes)\r\n");
+        } else {
+            unsigned int pi;
+            for (pi = 0; pi < proc_count; pi++) {
+                unsigned int ppid = kprocess_pid_at(pi);
+                kprocess_state_t pstate;
+                const char* sname = "dead";
+                char pidbuf[16];
+                if (ppid == 0) {
+                    continue;
+                }
+                pstate = kprocess_state_of(ppid);
+                if (pstate == KPROCESS_STATE_READY) {
+                    sname = "ready";
+                } else if (pstate == KPROCESS_STATE_RUNNING) {
+                    sname = "running";
+                } else if (pstate == KPROCESS_STATE_ERROR) {
+                    sname = "error";
+                }
+                kterm_u64_to_str(ppid, pidbuf, sizeof(pidbuf));
+                kterm_result("pid ");
+                kterm_result(pidbuf);
+                kterm_result("  ");
+                kterm_result(sname);
+                kterm_result("\r\n");
+            }
+        }
+        return;
+    }
+
+    if (kterm_streq(line, "lua")) {
+        kio_write("usage: lua <code>\n");
+        return;
+    }
+
+    if (kterm_starts_with(line, "lua ")) {
         args = kterm_skip_cmd(line);
-        kterm_cmd_lrun(args);
+        kterm_cmd_lua(args);
         return;
     }
 
@@ -321,8 +407,8 @@ static void kterm_exec(char* line, int* keep_running) {
         return;
     }
 
-    if (klua_cmd_run(line)) {
-        kterm_result("lua command executed\r\n");
+    if (klua_cmd_run_line(line)) {
+        serial_print("[kterm] lua command executed\r\n");
         return;
     }
 
@@ -331,55 +417,151 @@ static void kterm_exec(char* line, int* keep_running) {
 
 void kterm_run(void) {
     char line[KTERM_BUF_SIZE];
-    size_t pos = 0;
+    size_t len = 0;
+    size_t cur = 0;
     int keep_running = 1;
+    uint16_t line_start_cursor;
 
     serial_init();
 
-    kio_writeln("[kterm] terminal na tela (VGA), entrada via teclado/COM1");
-    serial_print("\r\n[kterm] serial debug ready (COM1)\r\n");
+    kio_writeln("terminal na tela (VGA), entrada via teclado/COM1");
+    serial_print("\r\nserial debug ready (COM1)\r\n");
     kterm_print_help();
     kterm_print_prompt();
+    line_start_cursor = vga_get_cursor();
 
     while (keep_running) {
-        char c = 0;
+        unsigned char key = 0;
 
         kprocess_poll();
+        keventlua_dispatch(klua_state());
 
-        if (!keyboard_getchar_nonblock(&c)) {
-            if (serial_can_read()) {
-                c = serial_getchar();
-            } else {
-                continue;
-            }
+        if (!keyboard_getkey_nonblock(&key)) {
+            continue;
         }
 
-        if (c == '\r' || c == '\n') {
+        /* Push key_pressed event for all keys */
+        {
+            char kbuf[2];
+            kbuf[0] = (char)key;
+            kbuf[1] = 0;
+            kevent_push_string("key_pressed", kbuf);
+        }
+
+        /* Enter */
+        if (key == '\r' || key == '\n') {
             vga_putchar('\n');
-            line[pos] = 0;
+            line[len] = 0;
             kterm_exec(line, &keep_running);
-            pos = 0;
+            len = 0;
+            cur = 0;
             if (keep_running) {
+                kio_write("\n");
                 kterm_print_prompt();
+                line_start_cursor = vga_get_cursor();
             }
             continue;
         }
 
-        if ((c == 8 || c == 127) && pos > 0) {
-            pos--;
-            vga_putchar('\b');
+        /* Backspace */
+        if ((key == 8 || key == 127) && cur > 0) {
+            size_t i;
+            cur--;
+            for (i = cur; i < len - 1; i++) {
+                line[i] = line[i + 1];
+            }
+            len--;
+
+            /* Redraw from cursor position */
+            vga_set_cursor(line_start_cursor + (uint16_t)cur);
+            for (i = cur; i < len; i++) {
+                vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+            }
+            vga_put_at(line_start_cursor + (uint16_t)len, ' ');
+            vga_set_cursor(line_start_cursor + (uint16_t)cur);
             continue;
         }
 
-        if (c >= 32 && c <= 126) {
-            if (pos + 1 >= KTERM_BUF_SIZE) {
-                kio_write("\n[error] line too long\n");
-                pos = 0;
+        /* Left arrow */
+        if (key == KBD_KEY_LEFT) {
+            if (cur > 0) {
+                cur--;
+                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+            }
+            continue;
+        }
+
+        /* Right arrow */
+        if (key == KBD_KEY_RIGHT) {
+            if (cur < len) {
+                cur++;
+                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+            }
+            continue;
+        }
+
+        /* Home */
+        if (key == KBD_KEY_HOME) {
+            cur = 0;
+            vga_set_cursor(line_start_cursor);
+            continue;
+        }
+
+        /* End */
+        if (key == KBD_KEY_END) {
+            cur = len;
+            vga_set_cursor(line_start_cursor + (uint16_t)len);
+            continue;
+        }
+
+        /* Delete */
+        if (key == KBD_KEY_DELETE) {
+            if (cur < len) {
+                size_t i;
+                for (i = cur; i < len - 1; i++) {
+                    line[i] = line[i + 1];
+                }
+                len--;
+                for (i = cur; i < len; i++) {
+                    vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+                }
+                vga_put_at(line_start_cursor + (uint16_t)len, ' ');
+                vga_set_cursor(line_start_cursor + (uint16_t)cur);
+            }
+            continue;
+        }
+
+        /* Ignore other special keys */
+        if (key >= 0x80) {
+            continue;
+        }
+
+        /* Printable character */
+        if (key >= 32 && key <= 126) {
+            size_t i;
+
+            if (len + 1 >= KTERM_BUF_SIZE) {
+                kio_write("\nerror: line too long\n");
+                len = 0;
+                cur = 0;
                 kterm_print_prompt();
+                line_start_cursor = vga_get_cursor();
                 continue;
             }
-            line[pos++] = c;
-            vga_putchar(c);
+
+            /* Shift chars right to insert at cursor */
+            for (i = len; i > cur; i--) {
+                line[i] = line[i - 1];
+            }
+            line[cur] = (char)key;
+            len++;
+            cur++;
+
+            /* Redraw from insert position */
+            for (i = cur - 1; i < len; i++) {
+                vga_put_at(line_start_cursor + (uint16_t)i, line[i]);
+            }
+            vga_set_cursor(line_start_cursor + (uint16_t)cur);
         }
     }
 }
