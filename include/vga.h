@@ -30,5 +30,8 @@ uint16_t vga_get_cursor(void);
 void vga_set_cursor(uint16_t pos);
 void vga_put_at(uint16_t pos, char c);
 char vga_char_at(uint16_t pos);
+void vga_scroll_view_up(int lines);
+void vga_scroll_view_down(int lines);
+int vga_is_scrolled_back(void);
 
 #endif

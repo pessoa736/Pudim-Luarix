@@ -5,10 +5,21 @@
 #define VGA_CRTC_INDEX 0x3D4
 #define VGA_CRTC_DATA 0x3D5
 
+#define VGA_SCROLLBACK_LINES 200
+
 static volatile uint16_t* const vga = (uint16_t*)0xB8000;
 static uint8_t current_color = (VGA_WHITE | (VGA_BLACK << 4));
 
 static uint16_t cursor;
+
+/* Scrollback buffer: stores VGA attribute+char pairs for each cell */
+static uint16_t scrollback[VGA_SCROLLBACK_LINES][VGA_WIDTH];
+static int scrollback_count = 0;   /* total lines stored */
+static int scrollback_head = 0;    /* next write slot (ring) */
+static int scroll_offset = 0;      /* how many lines scrolled back from live */
+/* Saved live screen when user is scrolled back */
+static uint16_t live_screen[VGA_HEIGHT * VGA_WIDTH];
+static uint16_t live_cursor;
 
 static inline void vga_outb(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "d"(port));
@@ -26,6 +37,18 @@ static void vga_scroll_up_one(void) {
     uint16_t total = VGA_WIDTH * VGA_HEIGHT;
     uint16_t last_row_start = total - VGA_WIDTH;
     uint16_t i;
+
+    /* Save the top line to scrollback before discarding */
+    {
+        int col;
+        for (col = 0; col < VGA_WIDTH; col++) {
+            scrollback[scrollback_head][col] = vga[col];
+        }
+        scrollback_head = (scrollback_head + 1) % VGA_SCROLLBACK_LINES;
+        if (scrollback_count < VGA_SCROLLBACK_LINES) {
+            scrollback_count++;
+        }
+    }
 
     for (i = 0; i < last_row_start; i++) {
         vga[i] = vga[i + VGA_WIDTH];
@@ -48,6 +71,9 @@ void vga_clear(void) {
     }
 
     cursor = 0;
+    scroll_offset = 0;
+    scrollback_count = 0;
+    scrollback_head = 0;
     vga_update_hw_cursor();
 }
 
@@ -371,4 +397,113 @@ char vga_char_at(uint16_t pos) {
         return ' ';
     }
     return (char)(vga[pos] & 0xFF);
+}
+
+/* --- Scrollback view functions --- */
+
+static void vga_save_live_screen(void) {
+    uint16_t i;
+    for (i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
+        live_screen[i] = vga[i];
+    }
+    live_cursor = cursor;
+}
+
+static void vga_restore_live_screen(void) {
+    uint16_t i;
+    for (i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
+        vga[i] = live_screen[i];
+    }
+    cursor = live_cursor;
+    vga_update_hw_cursor();
+}
+
+static void vga_render_scrollback_view(void) {
+    int line;
+    int row;
+    int sb_idx;
+    int live_lines;
+    uint16_t blank = (current_color << 8) | ' ';
+
+    /* We show VGA_HEIGHT lines total.
+     * The bottom (VGA_HEIGHT - scroll_offset) lines come from the saved live screen.
+     * The top scroll_offset lines come from the scrollback buffer. */
+
+    live_lines = VGA_HEIGHT - scroll_offset;
+
+    /* Top part: from scrollback */
+    for (row = 0; row < scroll_offset && row < VGA_HEIGHT; row++) {
+        /* scrollback_head points to next write slot. 
+         * Most recent saved line is at (scrollback_head - 1).
+         * We want lines from offset scroll_offset..1 (1 = most recent saved). 
+         * Line for this row: offset = scroll_offset - row lines back from live. */
+        line = scroll_offset - row; /* how many lines back from live top */
+        sb_idx = (scrollback_head - line + VGA_SCROLLBACK_LINES) % VGA_SCROLLBACK_LINES;
+        for (int col = 0; col < VGA_WIDTH; col++) {
+            vga[row * VGA_WIDTH + col] = scrollback[sb_idx][col];
+        }
+    }
+
+    /* Bottom part: from live screen, shifted */
+    for (row = scroll_offset; row < VGA_HEIGHT; row++) {
+        int src_row = row - scroll_offset;
+        for (int col = 0; col < VGA_WIDTH; col++) {
+            vga[row * VGA_WIDTH + col] = live_screen[src_row * VGA_WIDTH + col];
+        }
+    }
+
+    /* Hide cursor when scrolled back */
+    vga_outb(VGA_CRTC_INDEX, 0x0A);
+    vga_outb(VGA_CRTC_DATA, 0x20); /* bit 5 = cursor disable */
+}
+
+void vga_scroll_view_up(int lines) {
+    int max_offset;
+
+    if (lines <= 0) {
+        return;
+    }
+
+    max_offset = scrollback_count;
+    if (max_offset > VGA_SCROLLBACK_LINES) {
+        max_offset = VGA_SCROLLBACK_LINES;
+    }
+
+    if (scroll_offset == 0) {
+        /* Entering scrollback mode: save current screen */
+        vga_save_live_screen();
+    }
+
+    scroll_offset += lines;
+    if (scroll_offset > max_offset) {
+        scroll_offset = max_offset;
+    }
+
+    if (scroll_offset > 0) {
+        vga_render_scrollback_view();
+    }
+}
+
+void vga_scroll_view_down(int lines) {
+    if (lines <= 0 || scroll_offset == 0) {
+        return;
+    }
+
+    scroll_offset -= lines;
+    if (scroll_offset <= 0) {
+        scroll_offset = 0;
+        vga_restore_live_screen();
+        /* Re-enable cursor */
+        vga_outb(VGA_CRTC_INDEX, 0x0A);
+        vga_outb(VGA_CRTC_DATA, 0x0E); /* cursor start scanline */
+        vga_outb(VGA_CRTC_INDEX, 0x0B);
+        vga_outb(VGA_CRTC_DATA, 0x0F); /* cursor end scanline */
+        return;
+    }
+
+    vga_render_scrollback_view();
+}
+
+int vga_is_scrolled_back(void) {
+    return scroll_offset > 0;
 }
