@@ -1,5 +1,6 @@
 #include "kprocesslua.h"
 #include "kprocess.h"
+#include "ksecurity.h"
 
 static int kprocesslua_create(lua_State* L) {
     const char* script;
@@ -125,12 +126,140 @@ static int kprocesslua_max(lua_State* L) {
     return 1;
 }
 
+static int kprocesslua_getuid(lua_State* L) {
+    unsigned int pid = kprocess_current_pid(L);
+
+    /* Terminal (pid=0) runs as root */
+    if (pid == 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    lua_pushinteger(L, (lua_Integer)kprocess_get_uid(pid));
+    return 1;
+}
+
+static int kprocesslua_setuid(lua_State* L) {
+    unsigned int pid;
+    unsigned int caller_uid;
+    lua_Integer new_uid;
+
+    if (lua_gettop(L) != 1 || !lua_isinteger(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    new_uid = lua_tointeger(L, 1);
+    if (new_uid < 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (!ksecurity_user_exists((unsigned int)new_uid)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    pid = kprocess_current_pid(L);
+    caller_uid = (pid == 0) ? 0 : kprocess_get_uid(pid);
+
+    /* Only root or users with CAP_SETUID can change uid */
+    if (caller_uid != KSECURITY_ROOT_UID &&
+        !ksecurity_check_capability(caller_uid, KSECURITY_CAP_SETUID)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pid == 0) {
+        /* Terminal: no process slot to set */
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, kprocess_set_uid(pid, (unsigned int)new_uid));
+    return 1;
+}
+
+static int kprocesslua_getgid(lua_State* L) {
+    unsigned int pid = kprocess_current_pid(L);
+
+    if (pid == 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    lua_pushinteger(L, (lua_Integer)kprocess_get_gid(pid));
+    return 1;
+}
+
+static int kprocesslua_setgid(lua_State* L) {
+    unsigned int pid;
+    unsigned int caller_uid;
+    lua_Integer new_gid;
+
+    if (lua_gettop(L) != 1 || !lua_isinteger(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    new_gid = lua_tointeger(L, 1);
+    if (new_gid < 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    pid = kprocess_current_pid(L);
+    caller_uid = (pid == 0) ? 0 : kprocess_get_uid(pid);
+
+    if (caller_uid != KSECURITY_ROOT_UID &&
+        !ksecurity_check_capability(caller_uid, KSECURITY_CAP_SETUID)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pid == 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, kprocess_set_gid(pid, (unsigned int)new_gid));
+    return 1;
+}
+
+static int kprocesslua_get_capabilities(lua_State* L) {
+    unsigned int pid = kprocess_current_pid(L);
+    unsigned int uid = (pid == 0) ? 0 : kprocess_get_uid(pid);
+    uint32_t caps = ksecurity_get_capabilities(uid);
+
+    lua_createtable(L, 0, 6);
+
+    lua_pushboolean(L, (caps & KSECURITY_CAP_SETUID) != 0);
+    lua_setfield(L, -2, "setuid");
+
+    lua_pushboolean(L, (caps & KSECURITY_CAP_CHMOD) != 0);
+    lua_setfield(L, -2, "chmod");
+
+    lua_pushboolean(L, (caps & KSECURITY_CAP_CHOWN) != 0);
+    lua_setfield(L, -2, "chown");
+
+    lua_pushboolean(L, (caps & KSECURITY_CAP_KILL) != 0);
+    lua_setfield(L, -2, "kill");
+
+    lua_pushboolean(L, (caps & KSECURITY_CAP_FS_ADMIN) != 0);
+    lua_setfield(L, -2, "fs_admin");
+
+    lua_pushboolean(L, (caps & KSECURITY_CAP_PROCESS_ADMIN) != 0);
+    lua_setfield(L, -2, "process_admin");
+
+    return 1;
+}
+
 int kprocesslua_register(lua_State* L) {
     if (!kprocess_init(L)) {
         return 0;
     }
 
-    lua_createtable(L, 0, 8);
+    lua_createtable(L, 0, 13);
 
     lua_pushcfunction(L, kprocesslua_create);
     lua_setfield(L, -2, "create");
@@ -155,6 +284,21 @@ int kprocesslua_register(lua_State* L) {
 
     lua_pushcfunction(L, kprocesslua_max);
     lua_setfield(L, -2, "max");
+
+    lua_pushcfunction(L, kprocesslua_getuid);
+    lua_setfield(L, -2, "getuid");
+
+    lua_pushcfunction(L, kprocesslua_setuid);
+    lua_setfield(L, -2, "setuid");
+
+    lua_pushcfunction(L, kprocesslua_getgid);
+    lua_setfield(L, -2, "getgid");
+
+    lua_pushcfunction(L, kprocesslua_setgid);
+    lua_setfield(L, -2, "setgid");
+
+    lua_pushcfunction(L, kprocesslua_get_capabilities);
+    lua_setfield(L, -2, "get_capabilities");
 
     lua_setglobal(L, "process");
     return 1;

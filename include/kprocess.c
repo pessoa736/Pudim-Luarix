@@ -31,6 +31,8 @@ typedef struct {
     kprocess_state_t state;
     lua_State* thread;
     uint64_t cr3_root;
+    unsigned int uid;
+    unsigned int gid;
 } kprocess_entry_t;
 
 static lua_State* g_kprocess_main_lua = 0;
@@ -302,6 +304,8 @@ static void kprocess_release_slot(unsigned int index) {
     g_kprocess_entries[index].state = KPROCESS_STATE_DEAD;
     g_kprocess_entries[index].thread = 0;
     g_kprocess_entries[index].cr3_root = 0;
+    g_kprocess_entries[index].uid = 0;
+    g_kprocess_entries[index].gid = 0;
 }
 
 static void kprocess_print_lua_traceback(lua_State* L) {
@@ -417,6 +421,8 @@ int kprocess_init(lua_State* main_lua) {
         g_kprocess_entries[i].state = KPROCESS_STATE_DEAD;
         g_kprocess_entries[i].thread = 0;
         g_kprocess_entries[i].cr3_root = 0;
+        g_kprocess_entries[i].uid = 0;
+        g_kprocess_entries[i].gid = 0;
     }
 
     if (!kprocess_ensure_thread_table()) {
@@ -748,4 +754,66 @@ int kprocess_poll(void) {
     }
 
     return ran_any;
+}
+
+unsigned int kprocess_get_uid(unsigned int pid) {
+    int slot;
+
+    if (pid == 0) {
+        return 0;
+    }
+
+    slot = kprocess_find_slot_by_pid(pid);
+    if (slot < 0) {
+        return 0;
+    }
+
+    return g_kprocess_entries[slot].uid;
+}
+
+unsigned int kprocess_get_gid(unsigned int pid) {
+    int slot;
+
+    if (pid == 0) {
+        return 0;
+    }
+
+    slot = kprocess_find_slot_by_pid(pid);
+    if (slot < 0) {
+        return 0;
+    }
+
+    return g_kprocess_entries[slot].gid;
+}
+
+int kprocess_set_uid(unsigned int pid, unsigned int uid) {
+    int slot;
+
+    if (pid == 0) {
+        return 0;
+    }
+
+    slot = kprocess_find_slot_by_pid(pid);
+    if (slot < 0) {
+        return 0;
+    }
+
+    g_kprocess_entries[slot].uid = uid;
+    return 1;
+}
+
+int kprocess_set_gid(unsigned int pid, unsigned int gid) {
+    int slot;
+
+    if (pid == 0) {
+        return 0;
+    }
+
+    slot = kprocess_find_slot_by_pid(pid);
+    if (slot < 0) {
+        return 0;
+    }
+
+    g_kprocess_entries[slot].gid = gid;
+    return 1;
 }

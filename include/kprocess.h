@@ -27,4 +27,9 @@ int kprocess_tick(void);
 void kprocess_request_tick(void);
 int kprocess_poll(void);
 
+unsigned int kprocess_get_uid(unsigned int pid);
+unsigned int kprocess_get_gid(unsigned int pid);
+int kprocess_set_uid(unsigned int pid, unsigned int uid);
+int kprocess_set_gid(unsigned int pid, unsigned int gid);
+
 #endif
