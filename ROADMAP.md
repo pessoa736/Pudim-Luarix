@@ -47,7 +47,7 @@ memory.dump_stats()          -- info de memória
 - [x] Proteção de memória (RW+NX enforcement MMU em 4KB via kmemory)
 - [x] API Lua para consultar estado de memória (memory.dump_stats)
 - [x] API Lua para allocate/free/protect (backend heap + flags)
-- [ ] Demand paging / recuperação de page faults (handler atual halt)
+- [x] Demand paging / recuperação de page faults (não-present mapeado sob demanda, sem halt global)
 - **Impacto**: Isolamento real entre processos
 - **Esforço**: Alto | **Importância**: 10/10
 
@@ -63,7 +63,7 @@ fs.mount(device, path)      -- (futuro)
 fs.chmod(name, perms)       -- (futuro)
 ```
 - [x] Estender API kfs atual (aliases fs.* + kfs.*)
-- [ ] Persistence: garantir dados sobrevivem reboot
+- [x] Persistence: garantir dados sobrevivem reboot
 - [ ] Quotas de espaço por processo (futuro)
 - **Impacto**: Lua pode salvar/carregar estados
 - **Esforço**: Médio | **Importância**: 9/10
@@ -82,7 +82,7 @@ lock:unlock()
 ```
 - [x] Mutexes/spinlocks acessíveis via Lua
 - [x] Compatibilidade de API lock/unlock e acquire/release
-- [ ] Proteção contra race conditions
+- [x] Proteção contra race conditions
 - [ ] Deadlock detection (futuro)
 - **Impacto**: Código Lua seguro em multitarefa
 - **Esforço**: Médio | **Importância**: 8/10
@@ -127,7 +127,7 @@ kbootlog_line("selftest", "process scheduler armed");
 - [x] Page fault handler (#PF) com endereço de falha e error code detalhados (VGA+serial)
 - [x] Per-process page tables (PML4/PDPT/PD por processo, CR3 switch no scheduler)
 - [x] Proteção read/write/exec bits (RW+NX enforcement em 4KB via kmemory_apply_protection_4k)
-- [ ] Demand paging / recuperação de page faults (handler atual apenas imprime e halt)
+- [x] Demand paging / recuperação de page faults (handler tenta recuperação para faltas not-present)
 - **Impacto**: Isolamento entre processos Lua
 - **Esforço**: Alto | **Importância**: 10/10
 
@@ -135,27 +135,27 @@ kbootlog_line("selftest", "process scheduler armed");
 - [x] Round-robin scheduler cooperativo para Lua coroutines (kprocess_tick)
 - [x] PIT timer interrupt (100Hz) com contagem de ticks pendentes
 - [x] Context switching entre processos Lua (CR3 switch + lua_resume por processo)
-- [ ] Preemption sem yield explícito (timer seta flag mas não força context switch)
-- [ ] Scheduler integrado ao loop do terminal (atualmente roda ticks manuais no boot)
+- [x] Preemption sem yield explícito (timer seta flag mas não força context switch)
+- [x] Scheduler integrado ao loop do terminal (atualmente roda ticks manuais no boot)
 - **Impacto**: Processo Lua 1 + Processo Lua 2 rodam "simultaneamente"
 - **Esforço**: Alto | **Importância**: 9/10
 
 ### 2.3 **Drivers Básicos para Lua**
 - [x] PS/2 Keyboard driver (polling com scancode→ASCII, shift support)
-- [ ] PS/2 Keyboard → Lua input API (tabela `keyboard.*` em Lua)
+- [x] PS/2 Keyboard → Lua input API (tabela `keyboard.*` em Lua)
 - [x] PIT Timer interrupt-driven (100Hz, ktimer com ksys_tick + kprocess_request_tick)
-- [ ] Serial melhorado (interrupt-driven)
+- [x] Serial melhorado (interrupt-driven)
 - [x] VGA terminal com cursor hardware sincronizado + scroll automático
-- [ ] VGA com suporte a ANSI codes
+- [x] VGA com suporte a ANSI codes
 - **Impacto**: Input real + timing preciso
 - **Esforço**: Médio | **Importância**: 7/10
 
 ### 2.4 **Melhor Tratamento de Exceções**
 - [x] Handler #PF detalhado (endereço + error code em hex, VGA+serial)
 - [x] Handler #DE (division error) com halt
-- [ ] Handlers para #GP, #DF detalhados
-- [ ] Stack trace/backtrace
-- [ ] Lua panic handler com debugging
+- [x] Handlers para #GP, #DF detalhados
+- [x] Stack trace/backtrace
+- [x] Lua panic handler com debugging
 - **Impacto**: Diagnosticar erro em scripts fica fácil
 - **Esforço**: Médio | **Importância**: 7/10
 
@@ -164,10 +164,10 @@ kbootlog_line("selftest", "process scheduler armed");
 ## 3. RECOMENDADO (Médio Prazo - Storage & Advanced Features)
 
 ### 3.1 **Disco Persistente (suporta fs.mount)**
-- [ ] Driver ATA/IDE básico
-- [ ] Filesystem simples (FAT12 ou customizado)
-- [ ] Lua filesystem.lua boot script
-- [ ] Init system em Lua
+- [x] Driver ATA/IDE básico
+- [x] Filesystem simples (PLFS customizado + format lib PLF)
+- [x] Lua filesystem.lua boot script (init.lua auto-run)
+- [x] Init system em Lua
 - **Impacto**: Dados persistem entre boots, init customizável
 - **Esforço**: Alto | **Importância**: 8/10
 
@@ -177,9 +177,9 @@ event.subscribe("key_pressed", function(key) ... end)
 event.subscribe("timer", function() ... end)
 event.emit("custom_event", data)
 ```
-- [ ] Event queue e dispatcher
-- [ ] Callback system Lua
-- [ ] Built-in events: keyboard, timer, I/O
+- [x] Event queue e dispatcher
+- [x] Callback system Lua
+- [x] Built-in events: keyboard, timer, I/O
 - **Impacto**: Aplicações reativas, event-driven
 - **Esforço**: Médio | **Importância**: 6/10
 
@@ -203,6 +203,17 @@ process.get_capabilities()  -- capabilities
 - [ ] Memory inspector
 - **Impacto**: Development experience muito melhor
 - **Esforço**: Médio | **Importância**: 5/10
+
+### 3.5 **Boot Checkup Completo**
+- [ ] Verificação de integridade do heap (blocos, fragmentação)
+- [ ] Verificação de IDT (handlers registrados para exceções críticas)
+- [ ] Verificação de disco/ATA (leitura de teste, status do storage)
+- [ ] Verificação de Lua VM (estado válido, APIs registradas)
+- [ ] Verificação de filesystem (contagem de arquivos, consistência)
+- [ ] Verificação de timer/PIT (ticks incrementando)
+- [ ] Relatório de checkup com status pass/fail antes de abrir terminal
+- **Impacto**: Detecção de problemas no boot antes de expor o terminal
+- **Esforço**: Médio | **Importância**: 7/10
 
 ---
 
@@ -229,7 +240,23 @@ process.get_capabilities()  -- capabilities
 - **Impacto**: Aproveitar multi-core
 - **Esforço**: Muito Alto | **Importância**: 4/10
 
-### 4.4 **Virtualização**
+### 4.4 **Lua Language Server (LSP) no Kernel**
+```lua
+-- Objetivo: autocomplete, diagnósticos e hover para scripts Lua dentro do kernel
+-- Core em C (performance), exposto como API Lua
+local completions = lsp.complete("fs.wr", 5)  -- posição do cursor
+local diags = lsp.check("local x = 1 +")      -- erros/warnings
+```
+- [ ] Lexer/tokenizer Lua em C (rápido, sem alocação dinâmica onde possível)
+- [ ] Analisador de escopo/symbols em C (resolve globals, locals, upvalues)
+- [ ] Engine de completions em C (tabelas conhecidas: fs.*, process.*, sys.*, etc.)
+- [ ] API Lua para acesso: `lsp.complete()`, `lsp.check()`, `lsp.hover()`
+- [ ] Protocolo LSP subset via serial (JSON-RPC bridge para editor externo)
+- [ ] Integração com VS Code via extensão serial bridge
+- **Impacto**: Dev experience profissional com performance nativa
+- **Esforço**: Muito Alto | **Importância**: 4/10
+
+### 4.5 **Virtualização**
 - [ ] VMX/SVM (Intel/AMD virtualization)
 - [ ] Hypervisor primitivo
 - [ ] VMs simples
@@ -278,15 +305,19 @@ Isso evoluiria o kernel de cooperativo para preemptivo com I/O real.
 [x] Contagem regressiva pós-selftest antes do terminal
 [x] E820 map para Lua (sys.memory_map_* + comando memmap)
 [x] CPU vendor/brand e cores físicas em sysstats
-[ ] Preemption real (timer não força context switch)
-[ ] Demand paging (page fault → recuperação)
-[ ] Scheduler integrado ao loop do terminal
+[x] Preemption real (timer não força context switch)
+[x] Demand paging (page fault → recuperação)
+[x] Scheduler integrado ao loop do terminal
 [ ] System calls
-[ ] Disco persistente
-[ ] Serial interrupt-driven
-[ ] Input API Lua para teclado
-[ ] VGA ANSI codes
+[x] Disco persistente (PLFS + format lib PLF + init.lua)
+[x] Serial interrupt-driven
+[x] Input API Lua para teclado
+[x] VGA ANSI codes
 [x] ROM total e tamanho da imagem do kernel reportados separadamente
+[x] #GP e #DF handlers detalhados com registradores
+[x] Stack backtrace (RBP chain walk)
+[x] Lua panic/error com traceback
+[ ] User/Group system + permissões
 ```
 
 ---
@@ -385,7 +416,7 @@ Isso evoluiria o kernel de cooperativo para preemptivo com I/O real.
 > - É um kernel projetado em torno de Lua + isolamento.  
 > - APIs não são syscalls; são funções/tabelas Lua que o kernel expõe.  
 > - User-space IS Lua-space (não há separação binária; tudo é script).  
-> - Performance é secundária a simplicity e debuggability.
+> - Performance importa: lógica crítica em C como lib Lua, APIs em Lua para ergonomia.
 
 ---
 
