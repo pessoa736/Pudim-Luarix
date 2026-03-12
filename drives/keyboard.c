@@ -5,7 +5,17 @@
 #define KBD_STATUS_PORT 0x64
 #define KBD_STATUS_OUTPUT_FULL 0x01
 
+/* PS/2 scancodes for special keys (set 1) */
+#define SC_UP       0x48
+#define SC_DOWN     0x50
+#define SC_LEFT     0x4B
+#define SC_RIGHT    0x4D
+#define SC_HOME     0x47
+#define SC_END      0x4F
+#define SC_DELETE   0x53
+
 static int g_shift_pressed = 0;
+static int g_e0_prefix = 0;
 
 static inline uint8_t kbd_inb(uint16_t port) {
     uint8_t val;
@@ -41,10 +51,22 @@ static char kbd_map_scancode(uint8_t scancode, int shift) {
     return map[scancode];
 }
 
-int keyboard_getchar_nonblock(char* out) {
+static unsigned char kbd_map_e0_scancode(uint8_t scancode) {
+    switch (scancode) {
+        case SC_UP:     return KBD_KEY_UP;
+        case SC_DOWN:   return KBD_KEY_DOWN;
+        case SC_LEFT:   return KBD_KEY_LEFT;
+        case SC_RIGHT:  return KBD_KEY_RIGHT;
+        case SC_HOME:   return KBD_KEY_HOME;
+        case SC_END:    return KBD_KEY_END;
+        case SC_DELETE: return KBD_KEY_DELETE;
+        default:        return 0;
+    }
+}
+
+int keyboard_getkey_nonblock(unsigned char* out) {
     uint8_t status;
     uint8_t scancode;
-    char c;
 
     if (!out) {
         return 0;
@@ -56,6 +78,22 @@ int keyboard_getchar_nonblock(char* out) {
     }
 
     scancode = kbd_inb(KBD_DATA_PORT);
+
+    if (scancode == 0xE0) {
+        g_e0_prefix = 1;
+        return 0;
+    }
+
+    if (g_e0_prefix) {
+        g_e0_prefix = 0;
+
+        if (scancode & 0x80) {
+            return 0;
+        }
+
+        *out = kbd_map_e0_scancode(scancode);
+        return *out != 0;
+    }
 
     if (scancode == 0x2A || scancode == 0x36) {
         g_shift_pressed = 1;
@@ -71,11 +109,36 @@ int keyboard_getchar_nonblock(char* out) {
         return 0;
     }
 
-    c = kbd_map_scancode(scancode, g_shift_pressed);
-    if (!c) {
+    {
+        char c = kbd_map_scancode(scancode, g_shift_pressed);
+        if (!c) {
+            return 0;
+        }
+        *out = (unsigned char)c;
+        return 1;
+    }
+}
+
+int keyboard_getchar_nonblock(char* out) {
+    unsigned char key;
+
+    if (!out) {
         return 0;
     }
 
-    *out = c;
+    if (!keyboard_getkey_nonblock(&key)) {
+        return 0;
+    }
+
+    if (key >= 0x80) {
+        return 0;
+    }
+
+    *out = (char)key;
     return 1;
+}
+
+int keyboard_available(void) {
+    uint8_t status = kbd_inb(KBD_STATUS_PORT);
+    return (status & KBD_STATUS_OUTPUT_FULL) != 0;
 }
