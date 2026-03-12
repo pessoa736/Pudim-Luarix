@@ -1,5 +1,6 @@
 #include "kmemory.h"
 #include "stddef.h"
+#include "arch.h"
 
 #define KMEMORY_PD_BASE_ADDR 0x202000ull
 #define KMEMORY_PD_ENTRIES 512u
@@ -79,6 +80,7 @@ static inline uint64_t* kmemory_pd_base(void) {
     return (uint64_t*)(size_t)KMEMORY_PD_BASE_ADDR;
 }
 
+#ifdef ARCH_X86_64
 static inline void kmemory_invlpg(void* addr) {
     asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
 }
@@ -95,6 +97,11 @@ static inline uint64_t kmemory_read_cr3(void) {
     asm volatile("mov %%cr3, %0" : "=r"(value));
     return value;
 }
+#else
+static inline void kmemory_invlpg(void* addr) { (void)addr; }
+static inline void kmemory_flush_tlb_all(void) { }
+static inline uint64_t kmemory_read_cr3(void) { return 0; }
+#endif
 
 static int kmemory_find_or_alloc_pt_slot(uint32_t pd_index, uint64_t** out_table) {
     uint32_t i;
@@ -124,6 +131,7 @@ static int kmemory_find_or_alloc_pt_slot(uint32_t pd_index, uint64_t** out_table
 }
 
 static int kmemory_split_2m_pde(uint32_t pd_index) {
+#ifdef ARCH_X86_64
     uint64_t* pd;
     uint64_t pde;
     uint64_t pde_addr;
@@ -160,9 +168,14 @@ static int kmemory_split_2m_pde(uint32_t pd_index) {
     pd[pd_index] = ((uint64_t)(size_t)pt & KMEMORY_ADDR_MASK) | (pde & (0xFFFull & ~KMEMORY_PDE_FLAG_PS));
     kmemory_flush_tlb_all();
     return 1;
+#else
+    (void)pd_index;
+    return 1;
+#endif
 }
 
 static int kmemory_apply_protection_4k(uint64_t addr, uint64_t size, uint32_t flags) {
+#ifdef ARCH_X86_64
     uint64_t start;
     uint64_t last;
     uint64_t cur;
@@ -232,6 +245,10 @@ static int kmemory_apply_protection_4k(uint64_t addr, uint64_t size, uint32_t fl
     }
 
     return 1;
+#else
+    (void)addr; (void)size; (void)flags;
+    return 1;
+#endif
 }
 
 static void kmemory_u64_to_str(uint64_t value, char* out, uint32_t out_size) {
@@ -453,6 +470,7 @@ int kmemory_protect(void* ptr, uint32_t flags) {
 }
 
 int kmemory_handle_page_fault(uint64_t fault_addr, uint64_t error_code) {
+#ifdef ARCH_X86_64
     uint64_t cr3;
     uint64_t* pml4;
     uint64_t pml4e;
@@ -516,6 +534,10 @@ int kmemory_handle_page_fault(uint64_t fault_addr, uint64_t error_code) {
     pd[pd_index] = map_base | KMEMORY_PDE_FLAG_PRESENT | KMEMORY_PDE_FLAG_RW | KMEMORY_PDE_FLAG_PS;
     kmemory_invlpg((void*)(size_t)(fault_addr & ~(KMEMORY_PAGE_SIZE_4K - 1ull)));
     return 1;
+#else
+    (void)fault_addr; (void)error_code;
+    return 0;
+#endif
 }
 
 uint64_t kmemory_total_allocated(void) {

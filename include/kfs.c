@@ -2,6 +2,7 @@
 #include "kheap.h"
 #include "ata.h"
 #include "serial.h"
+#include "arch.h"
 
 #define KFS_MAX_FILES 32
 #define KFS_MAX_NAME  48
@@ -37,18 +38,33 @@ static inline void kfs_lock(void) {
         uint32_t desired = 1;
         uint32_t oldval;
 
+#ifdef ARCH_X86_64
         asm volatile(
             "lock cmpxchgl %2, %1"
             : "=a"(oldval), "+m"(g_kfs_lock)
             : "r"(desired), "0"(expected)
             : "cc"
         );
+#elif defined(ARCH_AARCH64)
+        uint32_t tmp;
+        asm volatile(
+            "1: ldaxr %w0, [%2]\n"
+            "   cmp   %w0, %w3\n"
+            "   bne   2f\n"
+            "   stxr  %w1, %w4, [%2]\n"
+            "   cbnz  %w1, 1b\n"
+            "2:\n"
+            : "=&r"(oldval), "=&r"(tmp)
+            : "r"(&g_kfs_lock), "r"(expected), "r"(desired)
+            : "cc", "memory"
+        );
+#endif
 
         if (oldval == expected) {
             return;
         }
 
-        asm volatile("pause");
+        arch_pause();
     }
 }
 

@@ -1,28 +1,41 @@
 #include "ksync.h"
 #include "kheap.h"
+#include "arch.h"
 
 /* Spinlock: busy-wait atomically */
 static void spin_lock_acquire(volatile uint32_t* lock) {
     while (1) {
         uint32_t expected = 0;
         uint32_t desired = 1;
-        
-        /* Try atomic compare-and-swap */
         uint32_t oldval;
-        asm volatile (
+
+#ifdef ARCH_X86_64
+        asm volatile(
             "lock cmpxchgl %2, %1"
-            : "=a" (oldval), "+m" (*lock)
-            : "r" (desired), "0" (expected)
+            : "=a"(oldval), "+m"(*lock)
+            : "r"(desired), "0"(expected)
             : "cc"
         );
-        
+#elif defined(ARCH_AARCH64)
+        uint32_t tmp;
+        asm volatile(
+            "1: ldaxr %w0, [%2]\n"
+            "   cmp   %w0, %w3\n"
+            "   bne   2f\n"
+            "   stxr  %w1, %w4, [%2]\n"
+            "   cbnz  %w1, 1b\n"
+            "2:\n"
+            : "=&r"(oldval), "=&r"(tmp)
+            : "r"(lock), "r"(expected), "r"(desired)
+            : "cc", "memory"
+        );
+#endif
+
         if (oldval == expected) {
-            /* Successfully acquired lock */
             return;
         }
-        
-        /* Failed, spin and retry */
-        asm volatile ("pause");
+
+        arch_pause();
     }
 }
 
@@ -74,21 +87,36 @@ void ksync_mutex_lock(ksync_mutex_t* lock) {
     while (1) {
         uint32_t expected = 0;
         uint32_t desired = 1;
-        
         uint32_t oldval;
-        asm volatile (
+
+#ifdef ARCH_X86_64
+        asm volatile(
             "lock cmpxchgl %2, %1"
-            : "=a" (oldval), "+m" (lock->owner_pid)
-            : "r" (desired), "0" (expected)
+            : "=a"(oldval), "+m"(lock->owner_pid)
+            : "r"(desired), "0"(expected)
             : "cc"
         );
-        
+#elif defined(ARCH_AARCH64)
+        uint32_t tmp;
+        asm volatile(
+            "1: ldaxr %w0, [%2]\n"
+            "   cmp   %w0, %w3\n"
+            "   bne   2f\n"
+            "   stxr  %w1, %w4, [%2]\n"
+            "   cbnz  %w1, 1b\n"
+            "2:\n"
+            : "=&r"(oldval), "=&r"(tmp)
+            : "r"(&lock->owner_pid), "r"(expected), "r"(desired)
+            : "cc", "memory"
+        );
+#endif
+
         if (oldval == expected) {
             lock->count = 1;
             return;
         }
-        
-        asm volatile ("pause");
+
+        arch_pause();
     }
 }
 
