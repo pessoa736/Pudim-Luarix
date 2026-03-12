@@ -1,4 +1,5 @@
 #include "ktimer.h"
+#include "kevent.h"
 #include "kprocess.h"
 #include "ksys.h"
 
@@ -78,5 +79,6 @@ void ktimer_init(uint32_t hz) {
 void ktimer_irq_handler(void) {
     ksys_tick();
     kprocess_request_tick();
+    kevent_timer_tick();
     ktimer_outb(PIC1_CMD, PIC_EOI);
 }
