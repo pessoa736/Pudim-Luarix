@@ -37,4 +37,19 @@ Returns total usable bytes managed by the heap.
 */
 size_t kheap_total_bytes(void);
 
+/*
+Returns total number of blocks (free + allocated) in the heap.
+*/
+unsigned int kheap_block_count(void);
+
+/*
+Returns number of free blocks in the heap.
+*/
+unsigned int kheap_free_block_count(void);
+
+/*
+Returns the size of the largest free block in the heap.
+*/
+size_t kheap_largest_free_block(void);
+
 #endif

@@ -426,3 +426,52 @@ size_t kheap_total_bytes(void) {
 
     return total_bytes;
 }
+
+unsigned int kheap_block_count(void) {
+    unsigned int count = 0;
+    block_header_t* current = heap_start;
+
+    while (current) {
+        if (!block_header_valid(current)) {
+            break;
+        }
+        count++;
+        current = current->next;
+    }
+
+    return count;
+}
+
+unsigned int kheap_free_block_count(void) {
+    unsigned int count = 0;
+    block_header_t* current = heap_start;
+
+    while (current) {
+        if (!block_header_valid(current)) {
+            break;
+        }
+        if (current->free) {
+            count++;
+        }
+        current = current->next;
+    }
+
+    return count;
+}
+
+size_t kheap_largest_free_block(void) {
+    size_t largest = 0;
+    block_header_t* current = heap_start;
+
+    while (current) {
+        if (!block_header_valid(current)) {
+            break;
+        }
+        if (current->free && current->size > largest) {
+            largest = current->size;
+        }
+        current = current->next;
+    }
+
+    return largest;
+}
