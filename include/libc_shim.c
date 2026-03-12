@@ -478,19 +478,7 @@ int snprintf(char* str, size_t size, const char* fmt, ...) {
     return (int)j;
 }
 
-int _setjmp(void* env) {
-    (void)env;
-    return 0;
-}
-
-void longjmp(void* env, int val) {
-    (void)env;
-    (void)val;
-
-    while (1) {
-        asm volatile ("hlt");
-    }
-}
+/* setjmp/longjmp provided by setjmp.asm */
 
 void abort(void) {
     while (1) {
