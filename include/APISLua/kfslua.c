@@ -169,6 +169,30 @@ static int kfslua_clear(lua_State* L) {
     return 1;
 }
 
+static int kfslua_save(lua_State* L) {
+    (void)L;
+
+    kfslua_ensure_init();
+    lua_pushboolean(L, kfs_persist_save());
+    return 1;
+}
+
+static int kfslua_load(lua_State* L) {
+    (void)L;
+
+    kfslua_ensure_init();
+    kfs_clear();
+    lua_pushboolean(L, kfs_persist_load());
+    return 1;
+}
+
+static int kfslua_persistent(lua_State* L) {
+    (void)L;
+
+    lua_pushboolean(L, kfs_persist_available());
+    return 1;
+}
+
 int kfslua_register(lua_State* L) {
     if (!L) {
         return 0;
@@ -176,7 +200,7 @@ int kfslua_register(lua_State* L) {
 
     kfslua_ensure_init();
 
-    lua_createtable(L, 0, 9);
+    lua_createtable(L, 0, 12);
 
     lua_pushcfunction(L, kfslua_write);
     lua_setfield(L, -2, "write");
@@ -204,6 +228,15 @@ int kfslua_register(lua_State* L) {
 
     lua_pushcfunction(L, kfslua_clear);
     lua_setfield(L, -2, "clear");
+
+    lua_pushcfunction(L, kfslua_save);
+    lua_setfield(L, -2, "save");
+
+    lua_pushcfunction(L, kfslua_load);
+    lua_setfield(L, -2, "load");
+
+    lua_pushcfunction(L, kfslua_persistent);
+    lua_setfield(L, -2, "persistent");
 
     lua_pushvalue(L, -1);
     lua_setglobal(L, "fs");
