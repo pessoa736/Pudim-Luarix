@@ -1,4 +1,11 @@
+#include "include/arch.h"
+#include "include/kdisplay.h"
+#include "include/serial.h"
+
+#if ARCH_HAS_VGA
 #include "include/vga.h"
+#endif
+
 #include "include/idt.h"
 #include "include/ata.h"
 #include "include/kbootlog.h"
@@ -9,7 +16,6 @@
 #include "include/kprocess.h"
 #include "include/kterm.h"
 #include "include/ktimer.h"
-#include "include/serial.h"
 #include "include/kevent.h"
 #include "include/ksys.h"
 #include "include/mouse.h"
@@ -62,7 +68,7 @@ static void boot_delay_tick(void) {
     volatile unsigned int i;
 
     for (i = 0; i < 8000000u; i++) {
-        asm volatile("nop");
+        arch_nop();
     }
 }
 
@@ -111,13 +117,22 @@ static void heap_self_test(void) {
 }
 
 void lau_main() {
-    // Early marker: write to VGA directly without clearing
-    volatile uint16_t* vga = (uint16_t*)0xB8000;
-    vga[0] = (0x0F << 8) | 'K';  // White 'K' in the first position
-    
-    vga_clear();
-    vga_print("Pudim-Luarix x86_64 \n");
+    serial_init();
+    kdisplay_init();
 
+#if ARCH_HAS_VGA
+    if (kdisplay_mode() == KDISPLAY_MODE_VGA) {
+        /* Early marker: write to VGA directly without clearing */
+        volatile uint16_t* vga = (uint16_t*)0xB8000;
+        vga[0] = (0x0F << 8) | 'K';  /* White 'K' in the first position */
+
+        vga_clear();
+    }
+#endif
+
+    kdisplay_write("Pudim-Luarix " ARCH_NAME " \n");
+
+#if ARCH_X86_64
     set_idt_entry(&ir0, (uint8_t)0x8E, (uint8_t)0);
     set_idt_entry(&ir8, (uint8_t)0x8E, (uint8_t)8);
     set_idt_entry(&ir13, (uint8_t)0x8E, (uint8_t)13);
@@ -129,7 +144,9 @@ void lau_main() {
     ktimer_init(100);
     serial_init_irq();
     mouse_init();
-    asm volatile("sti");
+#endif
+
+    arch_enable_interrupts();
 
     heap_init();
     kbootlog_enable_file();
@@ -226,12 +243,12 @@ void lau_main() {
 
     kbootlog_line("main", "entering terminal");
     boot_countdown_to_terminal();
-    kbootlog_writeln("\nwelcome to Pudim-luarix x86_64\n");
+    kbootlog_writeln("\nwelcome to Pudim-luarix " ARCH_NAME "\n");
     kterm_run();
 
     kbootlog_line("main", "halt");
 
     while (1) {
-        asm volatile ("hlt");
+        arch_halt();
     }
 }

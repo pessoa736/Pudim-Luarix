@@ -1,5 +1,6 @@
 #include "utypes.h"
 #include "stddef.h"
+#include "arch.h"
 
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
@@ -482,6 +483,6 @@ int snprintf(char* str, size_t size, const char* fmt, ...) {
 
 void abort(void) {
     while (1) {
-        asm volatile ("hlt");
+        arch_halt();
     }
 }

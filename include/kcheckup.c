@@ -5,6 +5,7 @@
 #include "ata.h"
 #include "kfs.h"
 #include "ksys.h"
+#include "arch.h"
 #include "APISLua/klua.h"
 
 /*
@@ -161,7 +162,7 @@ int kcheckup_timer(void) {
 
     /* Spin briefly to let at least one tick happen (PIT at 100Hz = 10ms) */
     for (spin = 0; spin < 2000000u; spin++) {
-        asm volatile("nop");
+        arch_nop();
     }
 
     t2 = ksys_uptime_ms();
