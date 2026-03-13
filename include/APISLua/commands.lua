@@ -1,4 +1,4 @@
----@diagnostic disable: undefined-global, undefined-field
+---@diagnostic disable:  undefined-field
 
 
 local function outln(msg)

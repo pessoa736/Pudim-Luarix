@@ -263,6 +263,91 @@ local diags = lsp.check("local x = 1 +")      -- erros/warnings
 - **Impacto**: Rodar múltiplos SOs
 - **Esforço**: Extremo | **Importância**: 2/10
 
+### 4.6 **Nomenclatura das APIs com Personalidade (Pudim-First)**
+```lua
+-- Objetivo: nomes mais expressivos, com analogia de confeitaria
+-- e propósito funcional claro para quem está lendo o código.
+-- Exemplo conceitual (não final):
+-- memory.allocate() -> massa.reservar()
+-- process.create()  -> cozinha.abrir_lote()
+```
+- [ ] Definir guia de naming para APIs Lua com metáforas de pudim + clareza técnica
+- [ ] Mapear APIs atuais e propor nomes mais intuitivos por domínio (memória, processos, fs, eventos)
+- [ ] Criar aliases compatíveis (nome antigo + nome novo) para migração sem quebra
+- [ ] Documentar tabela de equivalência "nome atual -> nome com personalidade"
+- [ ] Planejar depreciação gradual dos nomes antigos (com janela de compatibilidade)
+- **Impacto**: APIs mais legíveis, identidade forte de produto e menor curva de aprendizado
+- **Esforço**: Médio | **Importância**: 6/10
+
+### 4.7 **Integração LuaRocks no Build (lua_modules -> sistema)**
+```bash
+# Objetivo: durante o build, coletar libs Lua e empacotar para o runtime
+# Exemplo de fluxo:
+# luarocks install --tree lua_modules <rock>
+# make embed-lua-modules
+```
+- [ ] Definir etapa de build para instalar/atualizar dependências Lua via LuaRocks em `lua_modules`
+- [ ] Criar pipeline de empacotamento para incluir módulos Lua no artefato do sistema (initramfs/disco PLFS)
+- [ ] Padronizar manifesto de dependências (rocks e versões fixadas) para builds reproduzíveis
+- [ ] Adicionar validação no checkup/boot para confirmar módulos críticos carregados
+- [ ] Expor comando/API para listar módulos Lua embarcados em runtime
+- [ ] Documentar estratégia de fallback offline (cache local de rocks e mirror interno)
+- **Impacto**: Ecossistema Lua reaproveitável no kernel, onboarding mais rápido e menos código manual
+- **Esforço**: Médio-Alto | **Importância**: 7/10
+
+### 4.8 **Decisão de Arquitetura: Mapeamento de Armazenamento do Sistema**
+```
+┌──────────────────────────────────────────────────────────┐
+│  Lua FS API (fs.*, kfs.*)                                │
+├──────────────────────────────────────────────────────────┤
+│  VFS (Virtual Filesystem Layer)                          │
+├──────────────┬───────────────┬───────────────────────────┤
+│  PLFS        │  ROM Block    │  RAM Disk (volátil)       │
+│  (persistente│  (imagem      │  (temporário, rápido)     │
+│   ATA/IDE)   │   do kernel)  │                           │
+└──────────────┴───────────────┴───────────────────────────┘
+```
+> *A confeitaria tem prateleiras, geladeira e balcão — cada tipo de ingrediente fica onde faz sentido.*
+> *Este item decide onde cada "ingrediente" do sistema vive fisicamente.*
+
+#### Decisões de Design a Formalizar
+
+- [ ] **Modelo de regiões**: definir regiões fixas e nomeadas no disco
+  - `[0] kernel.img` — imagem do kernel, somente leitura no boot
+  - `[1] plfs_root` — raiz persistente do sistema (init.lua, scripts, dados)
+  - `[2] swap_area` — área de swap para processos Lua com muita heap (ou descarte)
+  - `[3] user_data` — partição opcional para dados de usuário separados
+- [ ] **Granularidade de bloco**: decidir entre blocos fixos de 512B vs 4KB vs 8KB para PLFS
+  - 512B: compatível com ATA PIO, menos desperdício em arquivos pequenos
+  - 4KB: alinhado à paginação MMU, mais eficiente com DMA futuro
+  - 8KB: menos fragmentação para arquivos maiores (scripts Lua)
+- [ ] **Endereçamento de blocos**: endereços de 32 bits (limitado a ~2TB) ou 64 bits nativo desde já
+- [ ] **Metadados immutáveis na ROM**: imagem do kernel + tabela de símbolos sempre na região somente-leitura
+- [ ] **Namespacing no VFS**: decidir separador (`/`, `:`, `::`) e profundidade máxima de path
+  - Ex.: `sys:/init.lua`, `user:/scripts/hello.lua`, `ram:/tmp/cache`
+- [ ] **Journaling / integridade**: PLFS com ou sem journal de intenção?
+  - Sem journal: simples, mas corrupção em power-loss
+  - Com journal (write-ahead log): mais seguro, mais complexo, mais código
+  - CoW (Copy-on-Write) leve: escrita atômica via shadow page (opção diferenciada)
+- [ ] **Mapeamento Lua → bloco**: `fs.read("sys:/init.lua")` deve percorrer VFS → driver → LBA sem expor endereços físicos
+- [ ] **Regiões mapeadas em memória (MMIO storage)**: para ROM/BIOS area e framebuffer futuro, decidir se entram no mesmo VFS ou têm API separada
+- [ ] **Identificação de volumes**: por UUID gerado no format, por rótulo string, ou por posição fixa no disco
+- [ ] **Limite de tamanho de arquivo e volume**: decidir limites máximos para PLFS v1
+  - Proposta diferenciada: usar `u64` para offsets desde o início para evitar reescritas futuras
+
+#### Características Diferenciadoras Propostas
+- **Lua-native paths**: paths são strings Lua normais, sem syscall de `open(2)` — `fs.read("plfs:/config")` é a API completa
+- **Região `ram:/` nativa**: disco RAM integrado no próprio VFS, zero configuração extra para temporários
+- **Metadata como tabela Lua**: `fs.stat()` retorna uma tabela Lua (`{size, mtime, mode, owner}`) em vez de struct C exposta
+- **Mount points como aliases Lua**: `fs.mount("ata0", "plfs:/")` registra alias interno sem montar em string global fixa
+- **CoW leve no PLFS**: escrita grava em shadow block antes de commitar, protegendo contra corrupção parcial no power-loss
+- [ ] Documentar decisão final em `docs/pt-br/architecture/storage-mapping.md`
+- [ ] Atualizar spec do PLFS (`fs/plfs/plfs.h`) para refletir granularidade e limites decididos
+- [ ] Criar diagrama de regiões no disco para o README de storage
+
+- **Impacto**: Base sólida e diferenciada para todo o I/O persistente do sistema — errar aqui exige reescrever PLFS inteiro
+- **Esforço**: Médio (decisão + documentação) → Alto (implementação das mudanças derivadas) | **Importância**: 9/10
+
 ---
 
 ## Sugestão: Próximo Passo Recomendado
