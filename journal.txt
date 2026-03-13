@@ -57,3 +57,23 @@ estudar mais antes de começa a de fato fazer tudo a mão.
 
 então cheguei a decisão que vou continuar mexendo nesse repor a ter
 cansar dele. provavelmente tentarei fazer do zero no futuro (a mão).
+
+
+
+[11:02 - 12/03/26]
+
+quase dois dias que não falo nada aqui kkkk. mais no tempo que fiquei sem
+falar fui pedindo para o copilot implementar varias coisas, com drives, um
+fs em lua, um formato para partições em lua proprio (chamei de plfs - 
+pudim lua file system) fora os de compatibilidade como o ntfs, fat32 e 
+ext4 (eu penso que poderia ter pedido para o btrfs tbm). pedir para 
+adicionar coisas uteis para o desenvolvimento tbm, com as definições lua 
+das apis para não me perder no codigo.
+
+com isso, nesse tempo, tbm pensei em adicionar mais personalidade, pois o
+amigo copilot ta fazendo muito parecido com o linux. quero colocar nomes 
+proprios, archictetura propria, logica propria... algo que não seja uma
+copia do linux.
+
+para o futuro, depois que eu terminar de fazer kernel, pretendo começa um 
+proprio OS onde terei mais proveito do sistema.

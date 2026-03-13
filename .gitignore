@@ -6,4 +6,7 @@ build/
 *.elf
 *.o
 
-laurix/
+lua_modules/
+*.rock
+
+commands_lua.inc
